@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ECABridge Stress Test Finding",
+  "type": "object",
+  "required": ["id", "timestamp", "engine", "category", "command", "task", "expected", "outcome"],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "description": "Sequential id within a single stress-test run"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the command was called"
+    },
+    "engine": {
+      "type": "string",
+      "enum": ["5.7", "5.8"],
+      "description": "Unreal Engine version under test"
+    },
+    "category": {
+      "type": "string",
+      "description": "ECABridge category as returned by GetCategory(), e.g. 'PhysicsAsset', 'Niagara', 'UMG'"
+    },
+    "command": {
+      "type": "string",
+      "description": "Snake-case MCP command name, e.g. 'set_body_sphere'"
+    },
+    "task": {
+      "type": "string",
+      "description": "Build-script task this call belongs to, e.g. 'character-physics-asset', 'hud-mvvm-binding'"
+    },
+    "params": {
+      "type": "object",
+      "description": "Params passed to the command (verbatim)"
+    },
+    "expected": {
+      "type": "string",
+      "description": "One-line description of what the agent expected to happen"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["ok", "warn", "fail"],
+      "description": "ok = worked as expected; warn = worked with caveat (missing fields, surprising param names, undocumented behavior); fail = errored OR verify call showed write didn't land"
+    },
+    "response": {
+      "type": ["object", "array", "string", "null"],
+      "description": "Raw response from the command (the JSON-RPC result.content[0].text payload parsed back to an object when JSON, else the raw text)"
+    },
+    "verify_call": {
+      "type": "object",
+      "description": "Round-trip read call to confirm the write landed (mandatory for any authoring command)",
+      "properties": {
+        "command": {"type": "string"},
+        "params": {"type": "object"},
+        "response": {"type": ["object", "array", "string", "null"]},
+        "match": {
+          "type": "boolean",
+          "description": "Did the read-back match the expected post-write state?"
+        }
+      },
+      "required": ["command", "match"]
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-text observation about the call — what surprised the agent, missing fields, unclear errors, etc."
+    },
+    "improvement": {
+      "type": "string",
+      "description": "If outcome is warn or fail, the agent's suggestion for what should change in ECABridge to fix this"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "description": "Wall-clock duration of the command call in milliseconds"
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Free-form tags for triage (e.g. ['batch-x', 'silent-fail', 'minor', 'cross-version'])"
+    }
+  }
+}

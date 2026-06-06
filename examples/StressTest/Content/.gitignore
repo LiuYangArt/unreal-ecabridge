@@ -1,0 +1,5 @@
+# Agent-generated content from stress-test runs is throwaway.
+# Only the .gitkeep + this file are tracked.
+*
+!.gitkeep
+!.gitignore
