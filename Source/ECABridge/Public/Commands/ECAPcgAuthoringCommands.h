@@ -131,3 +131,130 @@ public:
 
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
+/**
+ * Add a user parameter to a PCG graph's UserParameters property bag.
+ */
+class FECACommand_AddPCGGraphParameter : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("add_pcg_graph_parameter"); }
+	virtual FString GetDescription() const override { return TEXT("Add or overwrite a PCG graph user parameter. Supports scalar, FVector/FRotator/FTransform, object/static_mesh, soft_object, class, and arrays."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset"), true },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter name"), true },
+			{ TEXT("type"), TEXT("string"), TEXT("Parameter type: bool, int32, int64, float, double, name, string, text, vector, rotator, transform, object, static_mesh, soft_object, class"), true },
+			{ TEXT("container"), TEXT("string"), TEXT("Container type: none or array"), false, TEXT("none") },
+			{ TEXT("object_class"), TEXT("string"), TEXT("Optional UObject/UClass type for object, soft_object, and class parameters"), false },
+			{ TEXT("overwrite"), TEXT("boolean"), TEXT("Whether to replace an existing parameter with the same name"), false, TEXT("false") },
+			{ TEXT("value"), TEXT("object"), TEXT("Optional default value. Arrays expect a JSON array."), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset") },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter added") },
+			{ TEXT("parameters"), TEXT("array"), TEXT("Updated parameter list"), TEXT("object") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Rename a user parameter in a PCG graph's UserParameters property bag.
+ */
+class FECACommand_RenamePCGGraphParameter : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("rename_pcg_graph_parameter"); }
+	virtual FString GetDescription() const override { return TEXT("Rename a PCG graph user parameter while preserving its type and value where the engine can migrate it."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset"), true },
+			{ TEXT("name"), TEXT("string"), TEXT("Existing parameter name"), true },
+			{ TEXT("new_name"), TEXT("string"), TEXT("New parameter name"), true }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset") },
+			{ TEXT("name"), TEXT("string"), TEXT("Old parameter name") },
+			{ TEXT("new_name"), TEXT("string"), TEXT("New parameter name") },
+			{ TEXT("parameters"), TEXT("array"), TEXT("Updated parameter list"), TEXT("object") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Remove a user parameter from a PCG graph's UserParameters property bag.
+ */
+class FECACommand_RemovePCGGraphParameter : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("remove_pcg_graph_parameter"); }
+	virtual FString GetDescription() const override { return TEXT("Remove a PCG graph user parameter by name."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset"), true },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter name to remove"), true }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset") },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter removed") },
+			{ TEXT("parameters"), TEXT("array"), TEXT("Updated parameter list"), TEXT("object") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Set a default value on an existing PCG graph user parameter.
+ */
+class FECACommand_SetPCGGraphParameterDefault : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_pcg_graph_parameter_default"); }
+	virtual FString GetDescription() const override { return TEXT("Set the default value for an existing PCG graph user parameter. Arrays expect a JSON array."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset"), true },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter name"), true },
+			{ TEXT("value"), TEXT("object"), TEXT("Default value to assign. Arrays expect a JSON array."), true }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset") },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter updated") },
+			{ TEXT("parameters"), TEXT("array"), TEXT("Updated parameter list"), TEXT("object") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
