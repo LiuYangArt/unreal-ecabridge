@@ -644,7 +644,7 @@ namespace ECAPcgHelpers
 
 	static TSharedPtr<FJsonObject> BuildGraphParameterResult(UPCGGraph* Graph, const FString& GraphPath, const FString& Name, const FString* NewName = nullptr)
 	{
-		TSharedPtr<FJsonObject> Out = MakeResult();
+		TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
 		Out->SetStringField(TEXT("graph_path"), GraphPath);
 		Out->SetStringField(TEXT("name"), Name);
 		if (NewName)
