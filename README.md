@@ -1,5 +1,8 @@
 # ECABridge — UE MCP, plus everything Epic hasn't shipped to the launcher yet
 
+- fork from https://github.com/ibrews/ECABridge
+- 原仓库被作者隐藏了，fork出来单独维护
+
 ![ECABridge demo — building a scene from scratch with MCP commands](docs/media/demo.gif)
 
 ECABridge is the **+features layer on top of Epic's native `ModelContextProtocol` plugin**, built for the ~90% of UE developers who use the Epic Games Launcher and don't compile UE from source. We track Epic's `ue5-main` MCP plugin weekly and clean-room port the protocol changes and new toolsets within 1-2 weeks, so launcher users get bleeding-edge MCP capabilities without waiting for the next 5.X point release.
