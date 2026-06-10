@@ -17,6 +17,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACT_ROOT = REPO_ROOT / "artifacts" / "verify"
+SCRIPTS_DIR = REPO_ROOT / "scripts"
+sys.path.insert(0, str(SCRIPTS_DIR))
+from eca_defaults import DEFAULT_MCP_URL
 
 
 def run_id() -> str:
@@ -64,7 +67,7 @@ def run_subprocess(name: str, command: list[str], artifact_dir: Path, *, allow_f
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify ECABridge local checks")
     parser.add_argument("--smoke", action="store_true", help="Also run scripts/smoke-test.py; requires a running editor server")
-    parser.add_argument("--url", default="http://127.0.0.1:3000/mcp", help="MCP URL for --smoke")
+    parser.add_argument("--url", default=DEFAULT_MCP_URL, help="MCP URL for --smoke")
     args = parser.parse_args()
 
     artifact_dir = ARTIFACT_ROOT / run_id()

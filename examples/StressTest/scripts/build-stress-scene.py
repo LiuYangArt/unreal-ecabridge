@@ -19,7 +19,7 @@ CONTENT ROOT for all generated assets: /Game/StressTest/
 # ---------------------------------------------------------------------------
 # PHASE 0 — Pre-flight
 # ---------------------------------------------------------------------------
-# 1. curl http://127.0.0.1:3000/health → expect {bridge_ready: true, commands: N>500}
+# 1. curl http://127.0.0.1:8831/health → expect {bridge_ready: true, commands: N>500}
 # 2. list_categories → save the full category list for the help() spot-check
 # 3. get_project_overview → record engine version into all findings entries
 # 4. create_folder("/Game/StressTest") → idempotent

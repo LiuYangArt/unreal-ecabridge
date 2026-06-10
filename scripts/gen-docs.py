@@ -31,10 +31,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from eca_defaults import DEFAULT_MCP_URL
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-DEFAULT_URL = "http://127.0.0.1:3000/mcp"
+DEFAULT_URL = DEFAULT_MCP_URL
 DEFAULT_OUTPUT = REPO_ROOT / "docs" / "commands.html"
 DEFAULT_EXAMPLES = SCRIPT_DIR / "command-examples.json"
 

@@ -27,7 +27,7 @@ FString FECAClientToolsetBridge::GuessNativeMCPUrl()
 
 FString FECAClientToolsetBridge::GetECABridgeMCPUrl()
 {
-	int32 Port = 3000;
+	int32 Port = ECABridgeDefaults::ServerPort;
 	if (const UECABridgeSettings* Settings = GetDefault<UECABridgeSettings>())
 	{
 		Port = Settings->ServerPort;

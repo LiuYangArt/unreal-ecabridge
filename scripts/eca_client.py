@@ -1,14 +1,14 @@
 """Lightweight Python client for ECABridge.
 
 A thin, stdlib-only wrapper over the JSON-RPC-over-HTTP MCP endpoint
-(`/mcp` on port 3000 by default). Designed for tutorials, smoke tests,
+(`/mcp` on port 8831 by default). Designed for tutorials, smoke tests,
 and quick scripting from the command line — not a high-throughput
 library.
 
 Quick start:
     from scripts.eca_client import ECAClient
 
-    client = ECAClient()                      # defaults to :3000
+    client = ECAClient()                      # defaults to :8831
     health = client.health()
     print(f"{health['commands']} commands available")
 
@@ -32,8 +32,13 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+try:
+    from .eca_defaults import DEFAULT_MCP_URL
+except ImportError:
+    from eca_defaults import DEFAULT_MCP_URL
 
-DEFAULT_URL = "http://127.0.0.1:3000/mcp"
+
+DEFAULT_URL = DEFAULT_MCP_URL
 
 
 class ECAError(RuntimeError):
@@ -90,7 +95,7 @@ class _CategoryProxy:
 class ECAClient:
     """ECABridge HTTP client. One instance = one base URL.
 
-    Construct with the MCP endpoint (default :3000) and a per-request
+    Construct with the MCP endpoint (default :8831) and a per-request
     timeout in seconds. The client is stateless — safe to share across
     threads, no connection pooling.
     """

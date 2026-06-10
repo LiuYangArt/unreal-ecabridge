@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ECABridgeDefaults.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "HttpServerModule.h"
@@ -87,7 +88,7 @@ public:
 	~FECAMCPServer();
 
 	/** Start the HTTP server */
-	bool Start(int32 Port = 3000);
+	bool Start(int32 Port = ECABridgeDefaults::ServerPort);
 
 	/** Stop the HTTP server */
 	void Stop();
@@ -204,7 +205,7 @@ private:
 	
 	/** Server state */
 	bool bIsRunning = false;
-	int32 ServerPort = 3000;
+	int32 ServerPort = ECABridgeDefaults::ServerPort;
 
 	/** Per-response size cap. Results larger than this are split and the
 	 *  remainder is stashed in FECAResponseChunkCache. Default 64 KB. */

@@ -25,6 +25,7 @@ scripts/*
 !scripts/gen-examples.py
 !scripts/gen-docs.py
 !scripts/eca_client.py
+!scripts/eca_defaults.py
 !scripts/eca-describe.py
 !scripts/lint-skill-tools.py
 !scripts/example-sources/

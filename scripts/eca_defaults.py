@@ -1,0 +1,5 @@
+"""Shared ECABridge script defaults."""
+
+DEFAULT_SERVER_PORT = 8831
+DEFAULT_MCP_URL = f"http://127.0.0.1:{DEFAULT_SERVER_PORT}/mcp"
+DEFAULT_HEALTH_URL = f"http://127.0.0.1:{DEFAULT_SERVER_PORT}/health"

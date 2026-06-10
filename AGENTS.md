@@ -12,7 +12,7 @@
 
 ## Validation
 - Minimum local validation: `python tools\verify.py`.
-- With a running UE editor and ECABridge server: `python scripts\smoke-test.py --url http://127.0.0.1:3000/mcp`.
+- With a running UE editor and ECABridge server: `python scripts\smoke-test.py --url http://127.0.0.1:8831/mcp`.
 - If locally available, plugin build/deploy is `powershell -File scripts\build-deploy.ps1 -Engine 5.8`; repeat with `-Engine 5.7` for cross-version risk.
 - Verification writes machine-readable output under `artifacts/verify/<run-id>/`.
 

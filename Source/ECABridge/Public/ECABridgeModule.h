@@ -15,7 +15,7 @@ class AActor;
 /**
  * ECA Bridge Module
  * 
- * Provides TCP server for Epic Code Assistant to control Unreal Editor.
+ * Provides the MCP server for ECABridge editor control.
  * Commands are executed on the game thread to safely interact with editor subsystems.
  * Also monitors editor events and queues them for the AI to process.
  */

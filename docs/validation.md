@@ -15,10 +15,10 @@ This runs local checks that do not require Unreal Editor:
 - Artifact summary at `artifacts/verify/<run-id>/summary.json`.
 
 ## Runtime Smoke
-With Unreal Editor open and ECABridge listening on `127.0.0.1:3000`:
+With Unreal Editor open and ECABridge listening on `127.0.0.1:8831`:
 
 ```powershell
-python scripts\smoke-test.py --url http://127.0.0.1:3000/mcp
+python scripts\smoke-test.py --url http://127.0.0.1:8831/mcp
 ```
 
 ## Build Risk

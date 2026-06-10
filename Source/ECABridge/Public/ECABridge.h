@@ -12,7 +12,7 @@ class FECAMCPServer;
 /**
  * ECA Bridge
  * 
- * Main coordinator for Epic Code Assistant integration.
+ * Main coordinator for ECABridge MCP integration.
  * Manages the MCP HTTP server and routes commands to the appropriate handlers.
  */
 UCLASS()

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "ECABridgeDefaults.h"
 #include "ECABridgeSettings.generated.h"
 
 /**
@@ -22,7 +23,7 @@ public:
 
 	/** Port for the MCP HTTP server (for Claude Desktop, Cursor, etc.) */
 	UPROPERTY(config, EditAnywhere, Category="Server", meta=(ClampMin=1024, ClampMax=65535))
-	int32 ServerPort = 3000;
+	int32 ServerPort = ECABridgeDefaults::ServerPort;
 	
 	/** Whether to start the server automatically when the editor launches */
 	UPROPERTY(config, EditAnywhere, Category="Server")
@@ -53,5 +54,5 @@ public:
 	// UDeveloperSettings interface
 	virtual FName GetCategoryName() const override { return FName("Plugins"); }
 	virtual FText GetSectionText() const override { return NSLOCTEXT("ECABridge", "SettingsSection", "ECA Bridge"); }
-	virtual FText GetSectionDescription() const override { return NSLOCTEXT("ECABridge", "SettingsDescription", "Configure Epic Code Assistant MCP server for AI-assisted development"); }
+	virtual FText GetSectionDescription() const override { return NSLOCTEXT("ECABridge", "SettingsDescription", "Configure ECABridge MCP server for AI-assisted development"); }
 };

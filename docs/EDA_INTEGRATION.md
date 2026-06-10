@@ -13,13 +13,13 @@ This is the full walkthrough: register ECABridge with EDA, verify the connection
 | UE version | 5.8 Preview or newer (EDA does not exist on 5.7) |
 | Plugins enabled | `ModelContextProtocol` (Epic), `ECABridge` (this plugin) |
 | Native MCP port | `:8000` (`http://127.0.0.1:8000/mcp`) — auto-started by Epic's plugin |
-| ECABridge port | `:3000` (`http://127.0.0.1:3000/mcp`) — auto-started by this plugin |
+| ECABridge port | `:8831` (`http://127.0.0.1:8831/mcp`) — auto-started by this plugin |
 
 Confirm both are reachable:
 
 ```bash
 curl -s http://127.0.0.1:8000/health       # Epic native
-curl -s http://127.0.0.1:3000/health       # ECABridge — returns "commands": 402
+curl -s http://127.0.0.1:8831/health       # ECABridge — returns "commands": 402
 ```
 
 ---
@@ -35,7 +35,7 @@ EDA reads MCP toolset servers from `Saved/Config/<Platform>/MCPToolsetSettings.j
   "Toolsets": [
     {
       "Name": "ECABridge",
-      "ServerUrl": "http://127.0.0.1:3000/mcp",
+      "ServerUrl": "http://127.0.0.1:8831/mcp",
       "Transport": "StreamableHTTP"
     }
   ]
@@ -45,7 +45,7 @@ EDA reads MCP toolset servers from `Saved/Config/<Platform>/MCPToolsetSettings.j
 | Field | Value | Notes |
 |---|---|---|
 | `Name` | `ECABridge` | Free-form label shown in the EDA tool picker. |
-| `ServerUrl` | `http://127.0.0.1:3000/mcp` | ECABridge's MCP endpoint. Change the port if you've overridden it in **Project Settings → Plugins → ECABridge**. |
+| `ServerUrl` | `http://127.0.0.1:8831/mcp` | ECABridge's MCP endpoint. Change the port if you've overridden it in **Project Settings → Plugins → ECABridge**. |
 | `Transport` | `StreamableHTTP` | ECABridge uses Streamable HTTP — POST `/mcp` with `Accept: application/json, text/event-stream`. |
 
 Save the file. Restart the editor (or reload EDA via the panel's gear menu if your build supports hot-reload).
@@ -70,7 +70,7 @@ Open the EDA panel: **Window → Epic Developer Assistant** (or the AI button on
 If the entry doesn't appear:
 
 - Check the **Output Log** for `LogModelContextProtocol` warnings — connection errors land there with the raw HTTP response.
-- Confirm ECABridge is actually listening: `curl -s http://127.0.0.1:3000/health` should return JSON.
+- Confirm ECABridge is actually listening: `curl -s http://127.0.0.1:8831/health` should return JSON.
 - File path typos in `MCPToolsetSettings.json` silently produce an empty toolset list — re-validate JSON.
 
 ---
@@ -134,14 +134,14 @@ Both plugins run side-by-side. EDA can target either or both. Register both:
 {
   "Toolsets": [
     { "Name": "EpicNative", "ServerUrl": "http://127.0.0.1:8000/mcp", "Transport": "StreamableHTTP" },
-    { "Name": "ECABridge", "ServerUrl": "http://127.0.0.1:3000/mcp", "Transport": "StreamableHTTP" }
+    { "Name": "ECABridge", "ServerUrl": "http://127.0.0.1:8831/mcp", "Transport": "StreamableHTTP" }
   ]
 }
 ```
 
 ### Who owns what
 
-| Capability | Native (`:8000`) | ECABridge (`:3000`) |
+| Capability | Native (`:8000`) | ECABridge (`:8831`) |
 |---|---|---|
 | Actor spawn / transform | yes | yes (more variants — `clone_actor_array`, `scatter_actors_on_surface`, etc.) |
 | Asset find / rename / move | yes | yes (plus `bulk_rename_assets`, `replace_asset_references`) |
@@ -166,7 +166,7 @@ There's no port collision and no toolset-name collision (ECABridge prefixes its 
 A one-liner to verify both servers are answering MCP correctly:
 
 ```bash
-for port in 3000 8000; do
+for port in 8831 8000; do
   echo "=== :$port ==="
   curl -s -X POST "http://127.0.0.1:$port/mcp" \
     -H "Content-Type: application/json" \
@@ -183,7 +183,7 @@ For a more thorough cross-server check, `scripts/smoke-test.py --include-native`
 
 ```bash
 python scripts/smoke-test.py --include-native
-# ...full smoke test against :3000...
+# ...full smoke test against :8831...
 # --- cross-server probe: native MCP at http://127.0.0.1:8000/mcp ---
 #   ok   native: tools/list returned N tools
 #   ok   native + ECABridge expose disjoint tool name sets
@@ -243,7 +243,7 @@ Two settings in **Project Settings → Plugins → ECABridge** matter for EDA in
 
 | Setting | Default | When to change |
 |---|---|---|
-| MCP port | `3000` | If `:3000` is taken on your machine. Update both the project setting and `MCPToolsetSettings.json`. |
+| MCP port | `8831` | If `:8831` is taken on your machine. Update both the project setting and `MCPToolsetSettings.json`. |
 | Auto-start server | enabled | Leave on for editor sessions. Disable only for CI / headless builds. |
 
 ECABridge does not currently support per-toolset filtering from EDA's side — the entire ~400-command surface is exposed. Batch C (lazy registration, on the forward roadmap) will reduce the baseline `tools/list` size; until then the full surface is what EDA sees on first connect.
