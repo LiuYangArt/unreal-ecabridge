@@ -66,6 +66,173 @@ public:
 
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
+
+/**
+ * Add a null to a Control Rig hierarchy.
+ */
+class FECACommand_AddControlRigNull : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("add_control_rig_null"); }
+	virtual FString GetDescription() const override { return TEXT("Add a null element to a Control Rig hierarchy. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("name"), TEXT("string"), TEXT("New null name"), true },
+			{ TEXT("parent_name"), TEXT("string"), TEXT("Optional parent element name"), false },
+			{ TEXT("parent_type"), TEXT("string"), TEXT("Optional parent type: bone, control, null, curve, socket"), false },
+			{ TEXT("transform"), TEXT("object"), TEXT("Optional transform {location, rotation, scale}"), false },
+			{ TEXT("transform_space"), TEXT("string"), TEXT("global (default) or local"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("element"), TEXT("object"), TEXT("Created element") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Add a control to a Control Rig hierarchy.
+ */
+class FECACommand_AddControlRigControl : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("add_control_rig_control"); }
+	virtual FString GetDescription() const override { return TEXT("Add a control element to a Control Rig hierarchy. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("name"), TEXT("string"), TEXT("New control name"), true },
+			{ TEXT("parent_name"), TEXT("string"), TEXT("Optional parent element name"), false },
+			{ TEXT("parent_type"), TEXT("string"), TEXT("Optional parent type: bone, control, null, curve, socket"), false },
+			{ TEXT("control_type"), TEXT("string"), TEXT("bool, float, integer, vector2d, position, scale, rotator, euler_transform"), false },
+			{ TEXT("transform"), TEXT("object"), TEXT("Optional control offset transform {location, rotation, scale}"), false },
+			{ TEXT("initial_value"), TEXT("object"), TEXT("Optional initial value matching control_type"), false },
+			{ TEXT("display_name"), TEXT("string"), TEXT("Optional display name"), false },
+			{ TEXT("shape_name"), TEXT("string"), TEXT("Optional shape name"), false },
+			{ TEXT("shape_visible"), TEXT("boolean"), TEXT("Whether the shape is visible"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("element"), TEXT("object"), TEXT("Created element") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Set an existing Control Rig hierarchy element transform.
+ */
+class FECACommand_SetControlRigElementTransform : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_control_rig_element_transform"); }
+	virtual FString GetDescription() const override { return TEXT("Set local or global transform on a Control Rig hierarchy element. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("element_name"), TEXT("string"), TEXT("Element name"), true },
+			{ TEXT("element_type"), TEXT("string"), TEXT("Optional type: bone, control, null, curve, socket"), false },
+			{ TEXT("transform"), TEXT("object"), TEXT("Transform {location, rotation, scale}"), true },
+			{ TEXT("transform_space"), TEXT("string"), TEXT("global (default) or local"), false },
+			{ TEXT("affect_children"), TEXT("boolean"), TEXT("Whether children keep their relative transform"), false },
+			{ TEXT("set_initial"), TEXT("boolean"), TEXT("Set initial transform instead of current"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("element"), TEXT("object"), TEXT("Updated element") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Rename a Control Rig hierarchy element.
+ */
+class FECACommand_RenameControlRigElement : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("rename_control_rig_element"); }
+	virtual FString GetDescription() const override { return TEXT("Rename a Control Rig hierarchy element. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("element_name"), TEXT("string"), TEXT("Current element name"), true },
+			{ TEXT("new_name"), TEXT("string"), TEXT("New element name"), true },
+			{ TEXT("element_type"), TEXT("string"), TEXT("Optional type: bone, control, null, curve, socket"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("element"), TEXT("object"), TEXT("Renamed element") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Remove a Control Rig hierarchy element.
+ */
+class FECACommand_RemoveControlRigElement : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("remove_control_rig_element"); }
+	virtual FString GetDescription() const override { return TEXT("Remove a Control Rig hierarchy element. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("element_name"), TEXT("string"), TEXT("Element name"), true },
+			{ TEXT("element_type"), TEXT("string"), TEXT("Optional type: bone, control, null, curve, socket"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("removed"), TEXT("boolean"), TEXT("Whether the element was removed") },
+			{ TEXT("element_name"), TEXT("string"), TEXT("Removed element name") },
+			{ TEXT("element_type"), TEXT("string"), TEXT("Removed element type") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
 #endif // WITH_ECA_CONTROL_RIG
 
 #if WITH_ECA_GAMEPLAY_ABILITIES
