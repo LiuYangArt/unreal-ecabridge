@@ -117,7 +117,7 @@ public class ECABridge : ModuleRules
 			"ModelViewViewModel", "ModelViewViewModelBlueprint", "ModelViewViewModelEditor",
 
 			// Blueprint manipulation
-			"BlueprintGraph", "Kismet", "KismetCompiler", "GraphEditor",
+			"BlueprintGraph", "Kismet", "KismetCompiler", "GraphEditor", "AnimGraph",
 
 			// Asset management
 			"AssetTools", "AssetRegistry", "ContentBrowser", "EditorScriptingUtilities",  // For EditorAssetLibrary

@@ -149,6 +149,165 @@ public:
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
+// --- list_anim_bp_state_machines ------------------------------------------
+class FECACommand_ListAnimBPStateMachines : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("list_anim_bp_state_machines"); }
+	virtual FString GetDescription() const override { return TEXT("List Animation Blueprint state machines, states, transitions, and entry state."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual bool IsMutating() const override { return false; }
+	virtual TArray<FECACommandParam> GetParameters() const override { return { { TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true } }; }
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+// --- add_anim_bp_state -----------------------------------------------------
+class FECACommand_AddAnimBPState : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("add_anim_bp_state"); }
+	virtual FString GetDescription() const override { return TEXT("Add a state to an Animation Blueprint state machine. Optionally seeds the state with an animation asset."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("state_machine_name"), TEXT("string"), TEXT("State machine graph name or state machine node title"), true },
+			{ TEXT("state_name"), TEXT("string"), TEXT("New state name"), true },
+			{ TEXT("x"), TEXT("number"), TEXT("Graph X position"), false, TEXT("0") },
+			{ TEXT("y"), TEXT("number"), TEXT("Graph Y position"), false, TEXT("0") },
+			{ TEXT("animation_asset_path"), TEXT("string"), TEXT("Optional UAnimationAsset path to place inside the new state's graph"), false }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+// --- delete_anim_bp_state --------------------------------------------------
+class FECACommand_DeleteAnimBPState : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("delete_anim_bp_state"); }
+	virtual FString GetDescription() const override { return TEXT("Delete a state from an Animation Blueprint state machine."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("state_machine_name"), TEXT("string"), TEXT("State machine graph name or state machine node title"), true },
+			{ TEXT("state_name"), TEXT("string"), TEXT("State to delete"), true }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+// --- set_anim_bp_state_position -------------------------------------------
+class FECACommand_SetAnimBPStatePosition : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_anim_bp_state_position"); }
+	virtual FString GetDescription() const override { return TEXT("Set a state node's position in an Animation Blueprint state machine graph."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("state_machine_name"), TEXT("string"), TEXT("State machine graph name or state machine node title"), true },
+			{ TEXT("state_name"), TEXT("string"), TEXT("State to move"), true },
+			{ TEXT("x"), TEXT("number"), TEXT("Graph X position"), true },
+			{ TEXT("y"), TEXT("number"), TEXT("Graph Y position"), true }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+// --- set_anim_bp_entry_state ----------------------------------------------
+class FECACommand_SetAnimBPEntryState : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_anim_bp_entry_state"); }
+	virtual FString GetDescription() const override { return TEXT("Set the entry state for an Animation Blueprint state machine."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("state_machine_name"), TEXT("string"), TEXT("State machine graph name or state machine node title"), true },
+			{ TEXT("state_name"), TEXT("string"), TEXT("State to use as entry"), true }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+// --- add_anim_bp_transition ------------------------------------------------
+class FECACommand_AddAnimBPTransition : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("add_anim_bp_transition"); }
+	virtual FString GetDescription() const override { return TEXT("Add a transition between two states in an Animation Blueprint state machine."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("state_machine_name"), TEXT("string"), TEXT("State machine graph name or state machine node title"), true },
+			{ TEXT("source_state"), TEXT("string"), TEXT("Source state name"), true },
+			{ TEXT("target_state"), TEXT("string"), TEXT("Target state name"), true },
+			{ TEXT("crossfade_duration"), TEXT("number"), TEXT("Transition crossfade duration in seconds"), false },
+			{ TEXT("priority_order"), TEXT("number"), TEXT("Transition priority order"), false },
+			{ TEXT("bidirectional"), TEXT("boolean"), TEXT("Whether this transition can go both directions"), false },
+			{ TEXT("disabled"), TEXT("boolean"), TEXT("Whether this transition is disabled"), false },
+			{ TEXT("automatic_rule_based_on_sequence_player"), TEXT("boolean"), TEXT("Use automatic rule based on most relevant sequence player"), false },
+			{ TEXT("automatic_rule_trigger_time"), TEXT("number"), TEXT("Automatic rule trigger time in seconds"), false }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+// --- set_anim_bp_transition ------------------------------------------------
+class FECACommand_SetAnimBPTransition : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_anim_bp_transition"); }
+	virtual FString GetDescription() const override { return TEXT("Update properties on an existing Animation Blueprint transition."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("state_machine_name"), TEXT("string"), TEXT("State machine graph name or state machine node title"), true },
+			{ TEXT("source_state"), TEXT("string"), TEXT("Source state name"), true },
+			{ TEXT("target_state"), TEXT("string"), TEXT("Target state name"), true },
+			{ TEXT("transition_index"), TEXT("number"), TEXT("Zero-based match index when multiple transitions share the same endpoints"), false, TEXT("0") },
+			{ TEXT("crossfade_duration"), TEXT("number"), TEXT("Transition crossfade duration in seconds"), false },
+			{ TEXT("priority_order"), TEXT("number"), TEXT("Transition priority order"), false },
+			{ TEXT("bidirectional"), TEXT("boolean"), TEXT("Whether this transition can go both directions"), false },
+			{ TEXT("disabled"), TEXT("boolean"), TEXT("Whether this transition is disabled"), false },
+			{ TEXT("automatic_rule_based_on_sequence_player"), TEXT("boolean"), TEXT("Use automatic rule based on most relevant sequence player"), false },
+			{ TEXT("automatic_rule_trigger_time"), TEXT("number"), TEXT("Automatic rule trigger time in seconds"), false }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+// --- delete_anim_bp_transition --------------------------------------------
+class FECACommand_DeleteAnimBPTransition : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("delete_anim_bp_transition"); }
+	virtual FString GetDescription() const override { return TEXT("Delete a transition between two states in an Animation Blueprint state machine."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("state_machine_name"), TEXT("string"), TEXT("State machine graph name or state machine node title"), true },
+			{ TEXT("source_state"), TEXT("string"), TEXT("Source state name"), true },
+			{ TEXT("target_state"), TEXT("string"), TEXT("Target state name"), true },
+			{ TEXT("transition_index"), TEXT("number"), TEXT("Zero-based match index when multiple transitions share the same endpoints"), false, TEXT("0") }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
 // ─── create_animation_sequence ───────────────────────────────
 // Create a new UAnimSequence asset with programmatic bone keyframes.
 class FECACommand_CreateAnimationSequence : public IECACommand

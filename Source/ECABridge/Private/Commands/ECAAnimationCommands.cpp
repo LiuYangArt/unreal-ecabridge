@@ -25,6 +25,16 @@
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphSchema.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "ScopedTransaction.h"
+#include "Animation/AnimationAsset.h"
+#include "AnimationStateMachineGraph.h"
+#include "AnimationStateMachineSchema.h"
+#include "AnimGraphNode_StateMachineBase.h"
+#include "AnimStateEntryNode.h"
+#include "AnimStateNode.h"
+#include "AnimStateNodeBase.h"
+#include "AnimStateTransitionNode.h"
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -87,6 +97,14 @@ REGISTER_ECA_COMMAND(FECACommand_SetAnimationBlueprint);
 REGISTER_ECA_COMMAND(FECACommand_GetSkeletonInfo);
 REGISTER_ECA_COMMAND(FECACommand_CreateAnimationSequence);
 REGISTER_ECA_COMMAND(FECACommand_SetSkeletalMesh);
+REGISTER_ECA_COMMAND(FECACommand_ListAnimBPStateMachines);
+REGISTER_ECA_COMMAND(FECACommand_AddAnimBPState);
+REGISTER_ECA_COMMAND(FECACommand_DeleteAnimBPState);
+REGISTER_ECA_COMMAND(FECACommand_SetAnimBPStatePosition);
+REGISTER_ECA_COMMAND(FECACommand_SetAnimBPEntryState);
+REGISTER_ECA_COMMAND(FECACommand_AddAnimBPTransition);
+REGISTER_ECA_COMMAND(FECACommand_SetAnimBPTransition);
+REGISTER_ECA_COMMAND(FECACommand_DeleteAnimBPTransition);
 
 // ─── play_animation ───────────────────────────────────────────
 
@@ -165,6 +183,614 @@ FECACommandResult FECACommand_PlayAnimation::Execute(const TSharedPtr<FJsonObjec
 		Result->SetNumberField(TEXT("duration"), AnimSeq->GetPlayLength());
 	}
 
+	return FECACommandResult::Success(Result);
+}
+
+namespace AnimBPStateMachineHelpers
+{
+	static UAnimBlueprint* LoadAnimBlueprint(const FString& AnimBPPath)
+	{
+		UAnimBlueprint* AnimBP = LoadObject<UAnimBlueprint>(nullptr, *AnimBPPath);
+		if (!AnimBP && !AnimBPPath.Contains(TEXT(".")))
+		{
+			const FString FullPath = AnimBPPath + TEXT(".") + FPackageName::GetShortName(AnimBPPath);
+			AnimBP = LoadObject<UAnimBlueprint>(nullptr, *FullPath);
+		}
+		return AnimBP;
+	}
+
+	static FString MachineDisplayName(const UAnimationStateMachineGraph* Graph)
+	{
+		if (Graph && Graph->OwnerAnimGraphNode)
+		{
+			return Graph->OwnerAnimGraphNode->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+		}
+		return Graph ? Graph->GetName() : FString();
+	}
+
+	static void VisitGraphs(UEdGraph* Graph, TSet<UEdGraph*>& Seen, TArray<UAnimationStateMachineGraph*>& OutMachines)
+	{
+		if (!Graph || Seen.Contains(Graph))
+		{
+			return;
+		}
+		Seen.Add(Graph);
+
+		if (UAnimationStateMachineGraph* Machine = Cast<UAnimationStateMachineGraph>(Graph))
+		{
+			OutMachines.Add(Machine);
+		}
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (!Node)
+			{
+				continue;
+			}
+			for (UEdGraph* SubGraph : Node->GetSubGraphs())
+			{
+				VisitGraphs(SubGraph, Seen, OutMachines);
+			}
+		}
+	}
+
+	static TArray<UAnimationStateMachineGraph*> GetStateMachines(UAnimBlueprint* AnimBP)
+	{
+		TArray<UAnimationStateMachineGraph*> Machines;
+		TSet<UEdGraph*> Seen;
+		if (!AnimBP)
+		{
+			return Machines;
+		}
+
+		for (UEdGraph* Graph : AnimBP->FunctionGraphs)
+		{
+			VisitGraphs(Graph, Seen, Machines);
+		}
+		for (UEdGraph* Graph : AnimBP->UbergraphPages)
+		{
+			VisitGraphs(Graph, Seen, Machines);
+		}
+		return Machines;
+	}
+
+	static UAnimationStateMachineGraph* FindStateMachine(UAnimBlueprint* AnimBP, const FString& MachineName, FString& OutError)
+	{
+		TArray<UAnimationStateMachineGraph*> Matches;
+		for (UAnimationStateMachineGraph* Machine : GetStateMachines(AnimBP))
+		{
+			if (!Machine)
+			{
+				continue;
+			}
+			const FString DisplayName = MachineDisplayName(Machine);
+			if (Machine->GetName().Equals(MachineName, ESearchCase::IgnoreCase) || DisplayName.Equals(MachineName, ESearchCase::IgnoreCase))
+			{
+				Matches.Add(Machine);
+			}
+		}
+
+		if (Matches.Num() == 1)
+		{
+			return Matches[0];
+		}
+		if (Matches.Num() > 1)
+		{
+			OutError = FString::Printf(TEXT("State machine name '%s' is ambiguous (%d matches). Use the exact graph name from list_anim_bp_state_machines."), *MachineName, Matches.Num());
+			return nullptr;
+		}
+
+		TArray<FString> Available;
+		for (UAnimationStateMachineGraph* Machine : GetStateMachines(AnimBP))
+		{
+			if (Machine)
+			{
+				Available.Add(FString::Printf(TEXT("%s (%s)"), *MachineDisplayName(Machine), *Machine->GetName()));
+			}
+		}
+		OutError = FString::Printf(TEXT("State machine '%s' not found. Available: %s"), *MachineName, *FString::Join(Available, TEXT(", ")));
+		return nullptr;
+	}
+
+	static UAnimStateNode* FindState(UAnimationStateMachineGraph* Machine, const FString& StateName)
+	{
+		if (!Machine)
+		{
+			return nullptr;
+		}
+		for (UEdGraphNode* Node : Machine->Nodes)
+		{
+			UAnimStateNode* State = Cast<UAnimStateNode>(Node);
+			if (State && State->GetStateName().Equals(StateName, ESearchCase::IgnoreCase))
+			{
+				return State;
+			}
+		}
+		return nullptr;
+	}
+
+	static TArray<UAnimStateTransitionNode*> FindTransitions(UAnimationStateMachineGraph* Machine, const FString& SourceName, const FString& TargetName)
+	{
+		TArray<UAnimStateTransitionNode*> Matches;
+		if (!Machine)
+		{
+			return Matches;
+		}
+		for (UEdGraphNode* Node : Machine->Nodes)
+		{
+			UAnimStateTransitionNode* Transition = Cast<UAnimStateTransitionNode>(Node);
+			if (!Transition)
+			{
+				continue;
+			}
+			UAnimStateNodeBase* Source = Transition->GetPreviousState();
+			UAnimStateNodeBase* Target = Transition->GetNextState();
+			if (Source && Target && Source->GetStateName().Equals(SourceName, ESearchCase::IgnoreCase) && Target->GetStateName().Equals(TargetName, ESearchCase::IgnoreCase))
+			{
+				Matches.Add(Transition);
+			}
+		}
+		return Matches;
+	}
+
+	static TSharedPtr<FJsonObject> StateToJson(const UAnimStateNode* State)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"), State ? State->GetStateName() : TEXT(""));
+		Obj->SetStringField(TEXT("node_id"), State ? State->NodeGuid.ToString() : TEXT(""));
+		Obj->SetNumberField(TEXT("x"), State ? State->NodePosX : 0);
+		Obj->SetNumberField(TEXT("y"), State ? State->NodePosY : 0);
+		Obj->SetStringField(TEXT("bound_graph"), State && State->BoundGraph ? State->BoundGraph->GetName() : TEXT(""));
+		return Obj;
+	}
+
+	static TSharedPtr<FJsonObject> TransitionToJson(const UAnimStateTransitionNode* Transition, int32 Index)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		const UAnimStateNodeBase* Source = Transition ? Transition->GetPreviousState() : nullptr;
+		const UAnimStateNodeBase* Target = Transition ? Transition->GetNextState() : nullptr;
+		Obj->SetNumberField(TEXT("index"), Index);
+		Obj->SetStringField(TEXT("node_id"), Transition ? Transition->NodeGuid.ToString() : TEXT(""));
+		Obj->SetStringField(TEXT("source_state"), Source ? Source->GetStateName() : TEXT(""));
+		Obj->SetStringField(TEXT("target_state"), Target ? Target->GetStateName() : TEXT(""));
+		Obj->SetNumberField(TEXT("priority_order"), Transition ? Transition->PriorityOrder : 0);
+		Obj->SetNumberField(TEXT("crossfade_duration"), Transition ? Transition->CrossfadeDuration : 0.0f);
+		Obj->SetBoolField(TEXT("bidirectional"), Transition ? Transition->Bidirectional : false);
+		Obj->SetBoolField(TEXT("disabled"), Transition ? Transition->bDisabled : false);
+		Obj->SetBoolField(TEXT("automatic_rule_based_on_sequence_player"), Transition ? Transition->bAutomaticRuleBasedOnSequencePlayerInState : false);
+		Obj->SetNumberField(TEXT("automatic_rule_trigger_time"), Transition ? Transition->AutomaticRuleTriggerTime : 0.0f);
+		Obj->SetStringField(TEXT("bound_graph"), Transition && Transition->BoundGraph ? Transition->BoundGraph->GetName() : TEXT(""));
+		return Obj;
+	}
+
+	static TSharedPtr<FJsonObject> MachineToJson(UAnimationStateMachineGraph* Machine)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"), Machine ? Machine->GetName() : TEXT(""));
+		Obj->SetStringField(TEXT("display_name"), MachineDisplayName(Machine));
+
+		FString EntryState;
+		if (Machine && Machine->EntryNode)
+		{
+			if (UAnimStateNodeBase* OutputState = Cast<UAnimStateNodeBase>(Machine->EntryNode->GetOutputNode()))
+			{
+				EntryState = OutputState->GetStateName();
+			}
+		}
+		Obj->SetStringField(TEXT("entry_state"), EntryState);
+
+		TArray<TSharedPtr<FJsonValue>> States;
+		TArray<TSharedPtr<FJsonValue>> Transitions;
+		int32 TransitionIndex = 0;
+		if (Machine)
+		{
+			for (UEdGraphNode* Node : Machine->Nodes)
+			{
+				if (UAnimStateNode* State = Cast<UAnimStateNode>(Node))
+				{
+					States.Add(MakeShared<FJsonValueObject>(StateToJson(State)));
+				}
+				else if (UAnimStateTransitionNode* Transition = Cast<UAnimStateTransitionNode>(Node))
+				{
+					Transitions.Add(MakeShared<FJsonValueObject>(TransitionToJson(Transition, TransitionIndex++)));
+				}
+			}
+		}
+		Obj->SetArrayField(TEXT("states"), States);
+		Obj->SetArrayField(TEXT("transitions"), Transitions);
+		Obj->SetNumberField(TEXT("state_count"), States.Num());
+		Obj->SetNumberField(TEXT("transition_count"), Transitions.Num());
+		return Obj;
+	}
+
+	static void MarkChanged(UAnimBlueprint* AnimBP, UEdGraph* Graph)
+	{
+		if (Graph)
+		{
+			Graph->NotifyGraphChanged();
+		}
+		if (AnimBP)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBP);
+			AnimBP->MarkPackageDirty();
+		}
+	}
+
+	static bool ApplyTransitionParams(const TSharedPtr<FJsonObject>& Params, UAnimStateTransitionNode* Transition, FString& OutError)
+	{
+		if (!Transition)
+		{
+			OutError = TEXT("Transition is null.");
+			return false;
+		}
+
+		double NumberValue = 0.0;
+		bool BoolValue = false;
+
+		if (Params.IsValid() && Params->TryGetNumberField(TEXT("crossfade_duration"), NumberValue))
+		{
+			if (NumberValue < 0.0)
+			{
+				OutError = TEXT("crossfade_duration must be >= 0.");
+				return false;
+			}
+			Transition->CrossfadeDuration = static_cast<float>(NumberValue);
+		}
+		if (Params.IsValid() && Params->TryGetNumberField(TEXT("priority_order"), NumberValue))
+		{
+			Transition->PriorityOrder = FMath::RoundToInt(NumberValue);
+		}
+		if (Params.IsValid() && Params->TryGetBoolField(TEXT("bidirectional"), BoolValue))
+		{
+			Transition->Bidirectional = BoolValue;
+		}
+		if (Params.IsValid() && Params->TryGetBoolField(TEXT("disabled"), BoolValue))
+		{
+			Transition->bDisabled = BoolValue;
+		}
+		if (Params.IsValid() && Params->TryGetBoolField(TEXT("automatic_rule_based_on_sequence_player"), BoolValue))
+		{
+			Transition->bAutomaticRuleBasedOnSequencePlayerInState = BoolValue;
+		}
+		if (Params.IsValid() && Params->TryGetNumberField(TEXT("automatic_rule_trigger_time"), NumberValue))
+		{
+			Transition->AutomaticRuleTriggerTime = static_cast<float>(NumberValue);
+		}
+		return true;
+	}
+}
+
+FECACommandResult FECACommand_ListAnimBPStateMachines::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	}
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> MachinesArray;
+	for (UAnimationStateMachineGraph* Machine : AnimBPStateMachineHelpers::GetStateMachines(AnimBP))
+	{
+		MachinesArray.Add(MakeShared<FJsonValueObject>(AnimBPStateMachineHelpers::MachineToJson(Machine)));
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("anim_bp_path"), AnimBPPath);
+	Result->SetNumberField(TEXT("count"), MachinesArray.Num());
+	Result->SetArrayField(TEXT("state_machines"), MachinesArray);
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_AddAnimBPState::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath, MachineName, StateName, AnimationAssetPath;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	if (!GetStringParam(Params, TEXT("state_machine_name"), MachineName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_machine_name"));
+	if (!GetStringParam(Params, TEXT("state_name"), StateName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_name"));
+
+	double X = 0.0, Y = 0.0;
+	GetFloatParam(Params, TEXT("x"), X, false);
+	GetFloatParam(Params, TEXT("y"), Y, false);
+	GetStringParam(Params, TEXT("animation_asset_path"), AnimationAssetPath, false);
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP) return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+
+	FString Error;
+	UAnimationStateMachineGraph* Machine = AnimBPStateMachineHelpers::FindStateMachine(AnimBP, MachineName, Error);
+	if (!Machine) return FECACommandResult::Error(Error);
+	if (AnimBPStateMachineHelpers::FindState(Machine, StateName))
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("State '%s' already exists in state machine '%s'."), *StateName, *MachineName));
+	}
+
+	UAnimationAsset* AssetToSeed = nullptr;
+	if (!AnimationAssetPath.IsEmpty())
+	{
+		AssetToSeed = LoadObject<UAnimationAsset>(nullptr, *AnimationAssetPath);
+		if (!AssetToSeed && !AnimationAssetPath.Contains(TEXT(".")))
+		{
+			const FString FullPath = AnimationAssetPath + TEXT(".") + FPackageName::GetShortName(AnimationAssetPath);
+			AssetToSeed = LoadObject<UAnimationAsset>(nullptr, *FullPath);
+		}
+		if (!AssetToSeed)
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("Failed to load animation asset: %s"), *AnimationAssetPath));
+		}
+		if (!Machine->GetSchema())
+		{
+			return FECACommandResult::Error(TEXT("State machine graph has no schema."));
+		}
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("ECABridge", "AddAnimBPState", "Add Animation Blueprint State"));
+	AnimBP->Modify();
+	Machine->Modify();
+
+	UAnimStateNode* State = FEdGraphSchemaAction_NewStateNode::SpawnNodeFromTemplate<UAnimStateNode>(Machine, NewObject<UAnimStateNode>(), FVector2f(static_cast<float>(X), static_cast<float>(Y)), false);
+	if (!State)
+	{
+		return FECACommandResult::Error(TEXT("Failed to create animation state node."));
+	}
+	State->Modify();
+	State->OnRenameNode(StateName);
+
+	bool bSeededAnimation = false;
+	if (AssetToSeed)
+	{
+		TArray<FAssetData> Assets;
+		Assets.Add(FAssetData(AssetToSeed));
+		Machine->GetSchema()->DroppedAssetsOnNode(Assets, FVector2f(-300.0f, 0.0f), State);
+		bSeededAnimation = true;
+	}
+
+	AnimBPStateMachineHelpers::MarkChanged(AnimBP, Machine);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("anim_bp_path"), AnimBPPath);
+	Result->SetStringField(TEXT("state_machine_name"), Machine->GetName());
+	Result->SetObjectField(TEXT("state"), AnimBPStateMachineHelpers::StateToJson(State));
+	Result->SetBoolField(TEXT("seeded_animation"), bSeededAnimation);
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_DeleteAnimBPState::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath, MachineName, StateName;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	if (!GetStringParam(Params, TEXT("state_machine_name"), MachineName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_machine_name"));
+	if (!GetStringParam(Params, TEXT("state_name"), StateName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_name"));
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP) return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+
+	FString Error;
+	UAnimationStateMachineGraph* Machine = AnimBPStateMachineHelpers::FindStateMachine(AnimBP, MachineName, Error);
+	if (!Machine) return FECACommandResult::Error(Error);
+	UAnimStateNode* State = AnimBPStateMachineHelpers::FindState(Machine, StateName);
+	if (!State) return FECACommandResult::Error(FString::Printf(TEXT("State '%s' not found."), *StateName));
+
+	const FScopedTransaction Transaction(NSLOCTEXT("ECABridge", "DeleteAnimBPState", "Delete Animation Blueprint State"));
+	AnimBP->Modify();
+	Machine->Modify();
+	State->Modify();
+	State->DestroyNode();
+	AnimBPStateMachineHelpers::MarkChanged(AnimBP, Machine);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("deleted_state"), StateName);
+	Result->SetStringField(TEXT("state_machine_name"), Machine->GetName());
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_SetAnimBPStatePosition::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath, MachineName, StateName;
+	double X = 0.0, Y = 0.0;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	if (!GetStringParam(Params, TEXT("state_machine_name"), MachineName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_machine_name"));
+	if (!GetStringParam(Params, TEXT("state_name"), StateName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_name"));
+	if (!GetFloatParam(Params, TEXT("x"), X)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: x"));
+	if (!GetFloatParam(Params, TEXT("y"), Y)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: y"));
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP) return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+	FString Error;
+	UAnimationStateMachineGraph* Machine = AnimBPStateMachineHelpers::FindStateMachine(AnimBP, MachineName, Error);
+	if (!Machine) return FECACommandResult::Error(Error);
+	UAnimStateNode* State = AnimBPStateMachineHelpers::FindState(Machine, StateName);
+	if (!State) return FECACommandResult::Error(FString::Printf(TEXT("State '%s' not found."), *StateName));
+
+	const FScopedTransaction Transaction(NSLOCTEXT("ECABridge", "SetAnimBPStatePosition", "Set Animation Blueprint State Position"));
+	AnimBP->Modify();
+	Machine->Modify();
+	State->Modify();
+	State->NodePosX = FMath::RoundToInt(X);
+	State->NodePosY = FMath::RoundToInt(Y);
+	AnimBPStateMachineHelpers::MarkChanged(AnimBP, Machine);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetObjectField(TEXT("state"), AnimBPStateMachineHelpers::StateToJson(State));
+	Result->SetStringField(TEXT("state_machine_name"), Machine->GetName());
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_SetAnimBPEntryState::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath, MachineName, StateName;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	if (!GetStringParam(Params, TEXT("state_machine_name"), MachineName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_machine_name"));
+	if (!GetStringParam(Params, TEXT("state_name"), StateName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_name"));
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP) return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+	FString Error;
+	UAnimationStateMachineGraph* Machine = AnimBPStateMachineHelpers::FindStateMachine(AnimBP, MachineName, Error);
+	if (!Machine) return FECACommandResult::Error(Error);
+	if (!Machine->EntryNode) return FECACommandResult::Error(FString::Printf(TEXT("State machine '%s' has no entry node."), *MachineName));
+	UAnimStateNode* State = AnimBPStateMachineHelpers::FindState(Machine, StateName);
+	if (!State) return FECACommandResult::Error(FString::Printf(TEXT("State '%s' not found."), *StateName));
+
+	UEdGraphPin* EntryPin = Machine->EntryNode->GetOutputPin();
+	UEdGraphPin* StatePin = State->GetInputPin();
+	if (!EntryPin || !StatePin) return FECACommandResult::Error(TEXT("Entry or state input pin is missing."));
+
+	const FScopedTransaction Transaction(NSLOCTEXT("ECABridge", "SetAnimBPEntryState", "Set Animation Blueprint Entry State"));
+	AnimBP->Modify();
+	Machine->Modify();
+	Machine->EntryNode->Modify();
+	State->Modify();
+	if (const UEdGraphSchema* Schema = Machine->GetSchema())
+	{
+		Schema->BreakPinLinks(*EntryPin, true);
+		if (!Schema->TryCreateConnection(EntryPin, StatePin))
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("Failed to connect entry node to state '%s'."), *StateName));
+		}
+	}
+	else
+	{
+		return FECACommandResult::Error(TEXT("State machine graph has no schema."));
+	}
+	AnimBPStateMachineHelpers::MarkChanged(AnimBP, Machine);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("state_machine_name"), Machine->GetName());
+	Result->SetStringField(TEXT("entry_state"), State->GetStateName());
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_AddAnimBPTransition::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath, MachineName, SourceName, TargetName;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	if (!GetStringParam(Params, TEXT("state_machine_name"), MachineName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_machine_name"));
+	if (!GetStringParam(Params, TEXT("source_state"), SourceName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: source_state"));
+	if (!GetStringParam(Params, TEXT("target_state"), TargetName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: target_state"));
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP) return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+	FString Error;
+	UAnimationStateMachineGraph* Machine = AnimBPStateMachineHelpers::FindStateMachine(AnimBP, MachineName, Error);
+	if (!Machine) return FECACommandResult::Error(Error);
+	UAnimStateNode* Source = AnimBPStateMachineHelpers::FindState(Machine, SourceName);
+	UAnimStateNode* Target = AnimBPStateMachineHelpers::FindState(Machine, TargetName);
+	if (!Source) return FECACommandResult::Error(FString::Printf(TEXT("Source state '%s' not found."), *SourceName));
+	if (!Target) return FECACommandResult::Error(FString::Printf(TEXT("Target state '%s' not found."), *TargetName));
+	if (Params.IsValid())
+	{
+		double CrossfadeDuration = 0.0;
+		if (Params->TryGetNumberField(TEXT("crossfade_duration"), CrossfadeDuration) && CrossfadeDuration < 0.0)
+		{
+			return FECACommandResult::Error(TEXT("crossfade_duration must be >= 0."));
+		}
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("ECABridge", "AddAnimBPTransition", "Add Animation Blueprint Transition"));
+	AnimBP->Modify();
+	Machine->Modify();
+	Source->Modify();
+	Target->Modify();
+
+	const int32 TransitionX = (Source->NodePosX + Target->NodePosX) / 2;
+	const int32 TransitionY = (Source->NodePosY + Target->NodePosY) / 2;
+	UAnimStateTransitionNode* Transition = FEdGraphSchemaAction_NewStateNode::SpawnNodeFromTemplate<UAnimStateTransitionNode>(Machine, NewObject<UAnimStateTransitionNode>(), FVector2f(static_cast<float>(TransitionX), static_cast<float>(TransitionY)), false);
+	if (!Transition)
+	{
+		return FECACommandResult::Error(TEXT("Failed to create transition node."));
+	}
+	Transition->Modify();
+	Transition->CreateConnections(Source, Target);
+	if (!AnimBPStateMachineHelpers::ApplyTransitionParams(Params, Transition, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+	AnimBPStateMachineHelpers::MarkChanged(AnimBP, Machine);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("state_machine_name"), Machine->GetName());
+	Result->SetObjectField(TEXT("transition"), AnimBPStateMachineHelpers::TransitionToJson(Transition, 0));
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_SetAnimBPTransition::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath, MachineName, SourceName, TargetName;
+	int32 TransitionIndex = 0;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	if (!GetStringParam(Params, TEXT("state_machine_name"), MachineName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_machine_name"));
+	if (!GetStringParam(Params, TEXT("source_state"), SourceName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: source_state"));
+	if (!GetStringParam(Params, TEXT("target_state"), TargetName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: target_state"));
+	GetIntParam(Params, TEXT("transition_index"), TransitionIndex, false);
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP) return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+	FString Error;
+	UAnimationStateMachineGraph* Machine = AnimBPStateMachineHelpers::FindStateMachine(AnimBP, MachineName, Error);
+	if (!Machine) return FECACommandResult::Error(Error);
+	TArray<UAnimStateTransitionNode*> Matches = AnimBPStateMachineHelpers::FindTransitions(Machine, SourceName, TargetName);
+	if (!Matches.IsValidIndex(TransitionIndex))
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Transition %s -> %s at index %d not found (%d match(es))."), *SourceName, *TargetName, TransitionIndex, Matches.Num()));
+	}
+
+	UAnimStateTransitionNode* Transition = Matches[TransitionIndex];
+	const FScopedTransaction Transaction(NSLOCTEXT("ECABridge", "SetAnimBPTransition", "Set Animation Blueprint Transition"));
+	AnimBP->Modify();
+	Machine->Modify();
+	Transition->Modify();
+	if (!AnimBPStateMachineHelpers::ApplyTransitionParams(Params, Transition, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+	AnimBPStateMachineHelpers::MarkChanged(AnimBP, Machine);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("state_machine_name"), Machine->GetName());
+	Result->SetObjectField(TEXT("transition"), AnimBPStateMachineHelpers::TransitionToJson(Transition, TransitionIndex));
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_DeleteAnimBPTransition::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath, MachineName, SourceName, TargetName;
+	int32 TransitionIndex = 0;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	if (!GetStringParam(Params, TEXT("state_machine_name"), MachineName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: state_machine_name"));
+	if (!GetStringParam(Params, TEXT("source_state"), SourceName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: source_state"));
+	if (!GetStringParam(Params, TEXT("target_state"), TargetName)) return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: target_state"));
+	GetIntParam(Params, TEXT("transition_index"), TransitionIndex, false);
+
+	UAnimBlueprint* AnimBP = AnimBPStateMachineHelpers::LoadAnimBlueprint(AnimBPPath);
+	if (!AnimBP) return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+	FString Error;
+	UAnimationStateMachineGraph* Machine = AnimBPStateMachineHelpers::FindStateMachine(AnimBP, MachineName, Error);
+	if (!Machine) return FECACommandResult::Error(Error);
+	TArray<UAnimStateTransitionNode*> Matches = AnimBPStateMachineHelpers::FindTransitions(Machine, SourceName, TargetName);
+	if (!Matches.IsValidIndex(TransitionIndex))
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Transition %s -> %s at index %d not found (%d match(es))."), *SourceName, *TargetName, TransitionIndex, Matches.Num()));
+	}
+
+	UAnimStateTransitionNode* Transition = Matches[TransitionIndex];
+	const FScopedTransaction Transaction(NSLOCTEXT("ECABridge", "DeleteAnimBPTransition", "Delete Animation Blueprint Transition"));
+	AnimBP->Modify();
+	Machine->Modify();
+	Transition->Modify();
+	Transition->DestroyNode();
+	AnimBPStateMachineHelpers::MarkChanged(AnimBP, Machine);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("state_machine_name"), Machine->GetName());
+	Result->SetStringField(TEXT("deleted_source_state"), SourceName);
+	Result->SetStringField(TEXT("deleted_target_state"), TargetName);
+	Result->SetNumberField(TEXT("transition_index"), TransitionIndex);
 	return FECACommandResult::Success(Result);
 }
 
