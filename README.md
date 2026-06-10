@@ -22,7 +22,7 @@ UE 5.8 ships an experimental `ModelContextProtocol` plugin from Epic. ECABridge 
 
 - **Track Epic's `ue5-main` weekly** (see `automation/native-mcp-watcher/`) and port new protocol features and toolsets so launcher users see them ahead of the next binary release
 - **Use a non-overlapping config key** (`ecabridge` vs native's `unreal-mcp`) so both can register in the same `.mcp.json`
-- **Run on a non-overlapping port** (`:3000` vs native's `:8000`) so both can listen simultaneously
+- **Run on a non-overlapping port** (`:8831` vs native's `:8000`) so both can listen simultaneously
 - **Reimplement clean-room** under MIT — no Epic source in our repo. See `intelligence/tools/ue5-eula-mcp-redistribution.md` in our KB for the license discipline
 
 So if you have UE 5.8 Preview, run both. If you're on UE 5.7, ECABridge is your only option. If you're on a 5.8.1 launcher build but Epic just shipped a protocol upgrade in `ue5-main`, ECABridge gets it to you in 1-2 weeks instead of months.
@@ -34,7 +34,7 @@ So if you have UE 5.8 Preview, run both. If you're on UE 5.7, ECABridge is your 
    ```json
    {"Name": "ECABridge", "Enabled": true}
    ```
-3. Build and launch the editor — ECABridge starts automatically on `localhost:3000`.
+3. Build and launch the editor — ECABridge starts automatically on `localhost:8831`.
 4. Auto-generate the MCP client config for your AI tool:
    ```
    ECABridge.GenerateClientConfig All
@@ -42,7 +42,7 @@ So if you have UE 5.8 Preview, run both. If you're on UE 5.7, ECABridge is your 
    That writes `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`, and `.codex/config.toml` at your project root with the right per-client schemas. (Or pass `ClaudeCode`, `Cursor`, `VSCode`, `Gemini`, or `Codex` to target just one.) Coexists with native's MCP entry — we upsert, we don't overwrite.
 5. Or register manually with Claude Code:
    ```bash
-   claude mcp add --transport http --scope user unreal-ecabridge http://127.0.0.1:3000/mcp
+   claude mcp add --transport http --scope user unreal-ecabridge http://127.0.0.1:8831/mcp
    ```
 
 Full setup details, Claude Desktop config, and port-collision notes in **[Installation](https://github.com/ibrews/ECABridge/wiki/Installation)**.
@@ -101,8 +101,8 @@ These are features Epic shipped to `ue5-main` that we've ported under MIT so lau
 
 Single branch supports UE 5.7 and 5.8. Cross-version API divergences are handled with `UE_VERSION_OLDER_THAN(5,8,0)` guards.
 
-- **Verified on Fort 2026-05-19:** clean UAT `BuildPlugin`, loads in a 5.8 project, server starts on `:3000`, 500+ commands available with `Mutable`+`MovieRenderPipeline` enabled, build correctly omits the optional-dep commands when the upstream plugins aren't reachable, runs side-by-side with Epic's native `ModelContextProtocol` plugin on `:8000`.
-- **Verified on Theseus 2026-05-20:** clean `Test57Editor` + `Test58Editor` builds against both engines from the same `main` branch. UE 5.7 editor launches with `:3000` reporting `commands: 489, bridge_ready: true, sessions: 0`. `resources/list` returns a well-formed (empty for an empty test project) response. `ECABridge.GenerateClientConfig All` writes all 5 client configs with correct per-client schemas.
+- **Verified on Fort 2026-05-19:** clean UAT `BuildPlugin`, loads in a 5.8 project, server starts on the default MCP port, 500+ commands available with `Mutable`+`MovieRenderPipeline` enabled, build correctly omits the optional-dep commands when the upstream plugins aren't reachable, runs side-by-side with Epic's native `ModelContextProtocol` plugin on `:8000`.
+- **Verified on Theseus 2026-05-20:** clean `Test57Editor` + `Test58Editor` builds against both engines from the same `main` branch. UE 5.7 editor launches on the default MCP port reporting `commands: 489, bridge_ready: true, sessions: 0`. `resources/list` returns a well-formed (empty for an empty test project) response. `ECABridge.GenerateClientConfig All` writes all 5 client configs with correct per-client schemas.
 - **Verified on alex-mbp (macOS) 2026-05-20:** clean build against UE 5.7 from a standard Epic Games Launcher install (Apple M1 Max). Optional plugins without Mac binaries (nDisplay, etc.) are now correctly detected and skipped via `EngineHasPluginWithBinaries()` — `EngineHasPlugin()` alone returned true for source-only plugins causing linker failures. `PublicDelayLoadDLLs` entries are now Mac-guarded via `AddDelayLoadDLL()` wrapper; on Mac, module linking is handled by UBT automatically through `PrivateDependencyModuleNames`.
 
 ## Requirements

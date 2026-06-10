@@ -9,7 +9,7 @@ plugin_version_min: af30649
 
 # ue5-mcp — Field manual for ECABridge
 
-ECABridge exposes ~400 MCP tools over Streamable HTTP on `:3000/mcp`. This skill is the survival guide an LLM needs to use them without faceplanting on UE's silent-fail edges.
+ECABridge exposes ~400 MCP tools over Streamable HTTP on `:8831/mcp`. This skill is the survival guide an LLM needs to use them without faceplanting on UE's silent-fail edges.
 
 > **Skill major version 2.0** — refreshed for ECABridge `af30649` (Batches L/M/N/O/P/Q/R shipped). Breaking changes vs 1.x: schema-in-error response format, Python sandbox returns `run()` directly, optional-dep gating means some commands are missing on minimal projects, `outputSchema` is now authoritative for response shape.
 
@@ -18,7 +18,7 @@ ECABridge exposes ~400 MCP tools over Streamable HTTP on `:3000/mcp`. This skill
 ## 1. Connection — the only setup you need
 
 ```bash
-curl -s -X POST http://127.0.0.1:3000/mcp \
+curl -s -X POST http://127.0.0.1:8831/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1,"params":{}}'

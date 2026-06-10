@@ -182,7 +182,7 @@ namespace
 FString FECAClientConfigWriter::GetServerUrl()
 {
 	const UECABridgeSettings* Settings = UECABridgeSettings::Get();
-	const int32 Port = Settings ? Settings->ServerPort : 3000;
+	const int32 Port = Settings ? Settings->ServerPort : ECABridgeDefaults::ServerPort;
 	return FString::Printf(TEXT("http://127.0.0.1:%d/mcp"), Port);
 }
 

@@ -35,7 +35,7 @@ void FECABridgeModule::StartupModule()
 	UE_LOG(LogTemp, Log, TEXT("[ECABridge] Module starting..."));
 
 	// Skip server + handler registration in commandlet/cook/build runs.
-	// The HTTP server fights for ports 3000/3010 with the live editor and
+	// The HTTP server can fight for the configured MCP port with the live editor and
 	// drives a non-zero editor exit code that UAT reports as "Cook failed."
 	if (IsRunningCommandlet() || IsRunningCookCommandlet() || IsRunningDedicatedServer())
 	{

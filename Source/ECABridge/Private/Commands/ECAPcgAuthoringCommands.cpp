@@ -9,6 +9,9 @@
 #include "PCGPin.h"
 #include "PCGInputOutputSettings.h"
 
+#include "Engine/StaticMesh.h"
+#include "StructUtils/PropertyBag.h"
+
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -22,6 +25,10 @@ REGISTER_ECA_COMMAND(FECACommand_CreatePCGGraph)
 REGISTER_ECA_COMMAND(FECACommand_AddPCGNode)
 REGISTER_ECA_COMMAND(FECACommand_ConnectPCGNodes)
 REGISTER_ECA_COMMAND(FECACommand_SetPCGNodeProperty)
+REGISTER_ECA_COMMAND(FECACommand_AddPCGGraphParameter)
+REGISTER_ECA_COMMAND(FECACommand_RenamePCGGraphParameter)
+REGISTER_ECA_COMMAND(FECACommand_RemovePCGGraphParameter)
+REGISTER_ECA_COMMAND(FECACommand_SetPCGGraphParameterDefault)
 
 namespace ECAPcgHelpers
 {
@@ -91,6 +98,561 @@ namespace ECAPcgHelpers
 			return false;
 		}
 		return true;
+	}
+	static FString PropertyBagResultToString(EPropertyBagResult Result)
+	{
+		if (const UEnum* Enum = StaticEnum<EPropertyBagResult>())
+		{
+			return Enum->GetNameStringByValue(static_cast<int64>(Result));
+		}
+		return FString::FromInt(static_cast<int32>(Result));
+	}
+
+	static FString PropertyBagAlterationResultToString(EPropertyBagAlterationResult Result)
+	{
+		if (const UEnum* Enum = StaticEnum<EPropertyBagAlterationResult>())
+		{
+			return Enum->GetNameStringByValue(static_cast<int64>(Result));
+		}
+		return FString::FromInt(static_cast<int32>(Result));
+	}
+
+	static bool IsSuccess(EPropertyBagResult Result)
+	{
+		return Result == EPropertyBagResult::Success;
+	}
+
+	static bool IsSuccess(EPropertyBagAlterationResult Result)
+	{
+		return Result == EPropertyBagAlterationResult::Success;
+	}
+
+	static UClass* ResolveObjectClass(const FString& ClassName)
+	{
+		if (ClassName.IsEmpty())
+		{
+			return UObject::StaticClass();
+		}
+
+		if (UClass* LoadedClass = LoadObject<UClass>(nullptr, *ClassName))
+		{
+			return LoadedClass;
+		}
+
+		FString Stripped = ClassName;
+		if (Stripped.StartsWith(TEXT("U")) && Stripped.Len() > 1 && FChar::IsUpper(Stripped[1]))
+		{
+			Stripped = Stripped.Mid(1);
+		}
+
+		for (TObjectIterator<UClass> It; It; ++It)
+		{
+			UClass* Class = *It;
+			if (!Class)
+			{
+				continue;
+			}
+			if (Class->GetName().Equals(ClassName, ESearchCase::IgnoreCase) ||
+				Class->GetName().Equals(Stripped, ESearchCase::IgnoreCase) ||
+				Class->GetPathName().Equals(ClassName, ESearchCase::IgnoreCase))
+			{
+				return Class;
+			}
+		}
+
+		return nullptr;
+	}
+
+	static bool ResolvePropertyBagType(const FString& TypeName, const FString& ObjectClassName, EPropertyBagPropertyType& OutType, const UObject*& OutTypeObject, FString& OutError)
+	{
+		const FString Type = TypeName.ToLower().Replace(TEXT("_"), TEXT(""));
+		OutTypeObject = nullptr;
+
+		if (Type == TEXT("bool") || Type == TEXT("boolean")) OutType = EPropertyBagPropertyType::Bool;
+		else if (Type == TEXT("byte")) OutType = EPropertyBagPropertyType::Byte;
+		else if (Type == TEXT("int") || Type == TEXT("int32")) OutType = EPropertyBagPropertyType::Int32;
+		else if (Type == TEXT("int64")) OutType = EPropertyBagPropertyType::Int64;
+		else if (Type == TEXT("uint32")) OutType = EPropertyBagPropertyType::UInt32;
+		else if (Type == TEXT("uint64")) OutType = EPropertyBagPropertyType::UInt64;
+		else if (Type == TEXT("float")) OutType = EPropertyBagPropertyType::Float;
+		else if (Type == TEXT("double") || Type == TEXT("number")) OutType = EPropertyBagPropertyType::Double;
+		else if (Type == TEXT("name")) OutType = EPropertyBagPropertyType::Name;
+		else if (Type == TEXT("string")) OutType = EPropertyBagPropertyType::String;
+		else if (Type == TEXT("text")) OutType = EPropertyBagPropertyType::Text;
+		else if (Type == TEXT("vector") || Type == TEXT("fvector"))
+		{
+			OutType = EPropertyBagPropertyType::Struct;
+			OutTypeObject = TBaseStructure<FVector>::Get();
+		}
+		else if (Type == TEXT("rotator") || Type == TEXT("frotator"))
+		{
+			OutType = EPropertyBagPropertyType::Struct;
+			OutTypeObject = TBaseStructure<FRotator>::Get();
+		}
+		else if (Type == TEXT("transform") || Type == TEXT("ftransform"))
+		{
+			OutType = EPropertyBagPropertyType::Struct;
+			OutTypeObject = TBaseStructure<FTransform>::Get();
+		}
+		else if (Type == TEXT("staticmesh"))
+		{
+			OutType = EPropertyBagPropertyType::Object;
+			OutTypeObject = UStaticMesh::StaticClass();
+		}
+		else if (Type == TEXT("object"))
+		{
+			UClass* Class = ResolveObjectClass(ObjectClassName);
+			if (!Class)
+			{
+				OutError = FString::Printf(TEXT("object_class '%s' could not be resolved"), *ObjectClassName);
+				return false;
+			}
+			OutType = EPropertyBagPropertyType::Object;
+			OutTypeObject = Class;
+		}
+		else if (Type == TEXT("softobject"))
+		{
+			UClass* Class = ResolveObjectClass(ObjectClassName);
+			if (!Class)
+			{
+				OutError = FString::Printf(TEXT("object_class '%s' could not be resolved"), *ObjectClassName);
+				return false;
+			}
+			OutType = EPropertyBagPropertyType::SoftObject;
+			OutTypeObject = Class;
+		}
+		else if (Type == TEXT("class"))
+		{
+			UClass* Class = ResolveObjectClass(ObjectClassName);
+			if (!Class)
+			{
+				OutError = FString::Printf(TEXT("object_class '%s' could not be resolved"), *ObjectClassName);
+				return false;
+			}
+			OutType = EPropertyBagPropertyType::Class;
+			OutTypeObject = Class;
+		}
+		else
+		{
+			OutError = FString::Printf(TEXT("Unsupported PCG graph parameter type '%s'"), *TypeName);
+			return false;
+		}
+
+		return true;
+	}
+
+	static bool JsonToVector(const TSharedPtr<FJsonValue>& Json, FVector& OutValue)
+	{
+		const TSharedPtr<FJsonObject>* Obj = nullptr;
+		if (!Json.IsValid() || !Json->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+		{
+			return false;
+		}
+		double X = 0.0, Y = 0.0, Z = 0.0;
+		(*Obj)->TryGetNumberField(TEXT("x"), X);
+		(*Obj)->TryGetNumberField(TEXT("y"), Y);
+		(*Obj)->TryGetNumberField(TEXT("z"), Z);
+		OutValue = FVector(X, Y, Z);
+		return true;
+	}
+
+	static bool JsonToRotator(const TSharedPtr<FJsonValue>& Json, FRotator& OutValue)
+	{
+		const TSharedPtr<FJsonObject>* Obj = nullptr;
+		if (!Json.IsValid() || !Json->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+		{
+			return false;
+		}
+		double Pitch = 0.0, Yaw = 0.0, Roll = 0.0;
+		(*Obj)->TryGetNumberField(TEXT("pitch"), Pitch);
+		(*Obj)->TryGetNumberField(TEXT("yaw"), Yaw);
+		(*Obj)->TryGetNumberField(TEXT("roll"), Roll);
+		OutValue = FRotator(Pitch, Yaw, Roll);
+		return true;
+	}
+
+	static bool JsonToTransform(const TSharedPtr<FJsonValue>& Json, FTransform& OutValue)
+	{
+		const TSharedPtr<FJsonObject>* Obj = nullptr;
+		if (!Json.IsValid() || !Json->TryGetObject(Obj) || !Obj || !Obj->IsValid())
+		{
+			return false;
+		}
+
+		FVector Location = FVector::ZeroVector;
+		FVector Scale = FVector::OneVector;
+		FRotator Rotation = FRotator::ZeroRotator;
+		if (const TSharedPtr<FJsonObject>* LocationObj = nullptr; (*Obj)->TryGetObjectField(TEXT("location"), LocationObj))
+		{
+			JsonToVector(MakeShared<FJsonValueObject>(*LocationObj), Location);
+		}
+		if (const TSharedPtr<FJsonObject>* ScaleObj = nullptr; (*Obj)->TryGetObjectField(TEXT("scale"), ScaleObj))
+		{
+			JsonToVector(MakeShared<FJsonValueObject>(*ScaleObj), Scale);
+		}
+		if (const TSharedPtr<FJsonObject>* RotationObj = nullptr; (*Obj)->TryGetObjectField(TEXT("rotation"), RotationObj))
+		{
+			JsonToRotator(MakeShared<FJsonValueObject>(*RotationObj), Rotation);
+		}
+		OutValue = FTransform(Rotation, Location, Scale);
+		return true;
+	}
+
+	static UClass* GetDescObjectClass(const FPropertyBagPropertyDesc& Desc)
+	{
+		if (const UClass* Class = Cast<UClass>(Desc.ValueTypeObject.Get()))
+		{
+			return const_cast<UClass*>(Class);
+		}
+		return UObject::StaticClass();
+	}
+
+	static bool SetBagScalarValue(FInstancedPropertyBag& Bag, const FName Name, const FPropertyBagPropertyDesc& Desc, const TSharedPtr<FJsonValue>& ValueJson, FString& OutError)
+	{
+		EPropertyBagResult Result = EPropertyBagResult::TypeMismatch;
+		double Number = 0.0;
+		FString StringValue;
+		bool BoolValue = false;
+
+		switch (Desc.ValueType)
+		{
+		case EPropertyBagPropertyType::Bool:
+			if (!ValueJson->TryGetBool(BoolValue)) break;
+			Result = Bag.SetValueBool(Name, BoolValue);
+			break;
+		case EPropertyBagPropertyType::Byte:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = Bag.SetValueByte(Name, static_cast<uint8>(Number));
+			break;
+		case EPropertyBagPropertyType::Int32:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = Bag.SetValueInt32(Name, static_cast<int32>(Number));
+			break;
+		case EPropertyBagPropertyType::Int64:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = Bag.SetValueInt64(Name, static_cast<int64>(Number));
+			break;
+		case EPropertyBagPropertyType::UInt32:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = Bag.SetValueUInt32(Name, static_cast<uint32>(Number));
+			break;
+		case EPropertyBagPropertyType::UInt64:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = Bag.SetValueUInt64(Name, static_cast<uint64>(Number));
+			break;
+		case EPropertyBagPropertyType::Float:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = Bag.SetValueFloat(Name, static_cast<float>(Number));
+			break;
+		case EPropertyBagPropertyType::Double:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = Bag.SetValueDouble(Name, Number);
+			break;
+		case EPropertyBagPropertyType::Name:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = Bag.SetValueName(Name, FName(*StringValue));
+			break;
+		case EPropertyBagPropertyType::String:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = Bag.SetValueString(Name, StringValue);
+			break;
+		case EPropertyBagPropertyType::Text:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = Bag.SetValueText(Name, FText::FromString(StringValue));
+			break;
+		case EPropertyBagPropertyType::Struct:
+			if (Desc.ValueTypeObject.Get() == TBaseStructure<FVector>::Get())
+			{
+				FVector VectorValue;
+				if (JsonToVector(ValueJson, VectorValue)) Result = Bag.SetValueStruct(Name, VectorValue);
+			}
+			else if (Desc.ValueTypeObject.Get() == TBaseStructure<FRotator>::Get())
+			{
+				FRotator RotatorValue;
+				if (JsonToRotator(ValueJson, RotatorValue)) Result = Bag.SetValueStruct(Name, RotatorValue);
+			}
+			else if (Desc.ValueTypeObject.Get() == TBaseStructure<FTransform>::Get())
+			{
+				FTransform TransformValue;
+				if (JsonToTransform(ValueJson, TransformValue)) Result = Bag.SetValueStruct(Name, TransformValue);
+			}
+			break;
+		case EPropertyBagPropertyType::Object:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			{
+				UObject* ObjectValue = StringValue.IsEmpty() ? nullptr : StaticLoadObject(UObject::StaticClass(), nullptr, *StringValue);
+				UClass* ExpectedClass = GetDescObjectClass(Desc);
+				if (ObjectValue && ExpectedClass && !ObjectValue->IsA(ExpectedClass))
+				{
+					OutError = FString::Printf(TEXT("Object '%s' is not a '%s'"), *StringValue, *ExpectedClass->GetName());
+					return false;
+				}
+				Result = Bag.SetValueObject(Name, ObjectValue);
+			}
+			break;
+		case EPropertyBagPropertyType::SoftObject:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = Bag.SetValueSoftPath(Name, FSoftObjectPath(StringValue));
+			break;
+		case EPropertyBagPropertyType::Class:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			{
+				UClass* ClassValue = StringValue.IsEmpty() ? nullptr : LoadObject<UClass>(nullptr, *StringValue);
+				Result = Bag.SetValueClass(Name, ClassValue);
+			}
+			break;
+		default:
+			break;
+		}
+
+		if (!IsSuccess(Result))
+		{
+			OutError = FString::Printf(TEXT("Failed to set parameter '%s': %s"), *Name.ToString(), *PropertyBagResultToString(Result));
+			return false;
+		}
+		return true;
+	}
+
+	static bool AddArrayValue(FPropertyBagArrayRef& ArrayRef, const FPropertyBagPropertyDesc& Desc, const TSharedPtr<FJsonValue>& ValueJson, FString& OutError)
+	{
+		const int32 Index = ArrayRef.AddValue();
+		EPropertyBagResult Result = EPropertyBagResult::TypeMismatch;
+		double Number = 0.0;
+		FString StringValue;
+		bool BoolValue = false;
+
+		switch (Desc.ValueType)
+		{
+		case EPropertyBagPropertyType::Bool:
+			if (!ValueJson->TryGetBool(BoolValue)) break;
+			Result = ArrayRef.SetValueBool(Index, BoolValue);
+			break;
+		case EPropertyBagPropertyType::Byte:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = ArrayRef.SetValueByte(Index, static_cast<uint8>(Number));
+			break;
+		case EPropertyBagPropertyType::Int32:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = ArrayRef.SetValueInt32(Index, static_cast<int32>(Number));
+			break;
+		case EPropertyBagPropertyType::Int64:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = ArrayRef.SetValueInt64(Index, static_cast<int64>(Number));
+			break;
+		case EPropertyBagPropertyType::UInt32:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = ArrayRef.SetValueUInt32(Index, static_cast<uint32>(Number));
+			break;
+		case EPropertyBagPropertyType::UInt64:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = ArrayRef.SetValueUInt64(Index, static_cast<uint64>(Number));
+			break;
+		case EPropertyBagPropertyType::Float:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = ArrayRef.SetValueFloat(Index, static_cast<float>(Number));
+			break;
+		case EPropertyBagPropertyType::Double:
+			if (!ValueJson->TryGetNumber(Number)) break;
+			Result = ArrayRef.SetValueDouble(Index, Number);
+			break;
+		case EPropertyBagPropertyType::Name:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = ArrayRef.SetValueName(Index, FName(*StringValue));
+			break;
+		case EPropertyBagPropertyType::String:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = ArrayRef.SetValueString(Index, StringValue);
+			break;
+		case EPropertyBagPropertyType::Text:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = ArrayRef.SetValueText(Index, FText::FromString(StringValue));
+			break;
+		case EPropertyBagPropertyType::Struct:
+			if (Desc.ValueTypeObject.Get() == TBaseStructure<FVector>::Get())
+			{
+				FVector VectorValue;
+				if (JsonToVector(ValueJson, VectorValue)) Result = ArrayRef.SetValueStruct(Index, VectorValue);
+			}
+			else if (Desc.ValueTypeObject.Get() == TBaseStructure<FRotator>::Get())
+			{
+				FRotator RotatorValue;
+				if (JsonToRotator(ValueJson, RotatorValue)) Result = ArrayRef.SetValueStruct(Index, RotatorValue);
+			}
+			else if (Desc.ValueTypeObject.Get() == TBaseStructure<FTransform>::Get())
+			{
+				FTransform TransformValue;
+				if (JsonToTransform(ValueJson, TransformValue)) Result = ArrayRef.SetValueStruct(Index, TransformValue);
+			}
+			break;
+		case EPropertyBagPropertyType::Object:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			{
+				UObject* ObjectValue = StringValue.IsEmpty() ? nullptr : StaticLoadObject(UObject::StaticClass(), nullptr, *StringValue);
+				UClass* ExpectedClass = GetDescObjectClass(Desc);
+				if (ObjectValue && ExpectedClass && !ObjectValue->IsA(ExpectedClass))
+				{
+					OutError = FString::Printf(TEXT("Object '%s' is not a '%s'"), *StringValue, *ExpectedClass->GetName());
+					return false;
+				}
+				Result = ArrayRef.SetValueObject(Index, ObjectValue);
+			}
+			break;
+		case EPropertyBagPropertyType::SoftObject:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = ArrayRef.SetValueSoftPath(Index, FSoftObjectPath(StringValue));
+			break;
+		case EPropertyBagPropertyType::Class:
+			if (!ValueJson->TryGetString(StringValue)) break;
+			Result = ArrayRef.SetValueClass(Index, StringValue.IsEmpty() ? nullptr : LoadObject<UClass>(nullptr, *StringValue));
+			break;
+		default:
+			break;
+		}
+
+		if (!IsSuccess(Result))
+		{
+			OutError = FString::Printf(TEXT("Failed to set array value at index %d: %s"), Index, *PropertyBagResultToString(Result));
+			return false;
+		}
+		return true;
+	}
+
+	static const FPropertyBagPropertyDesc* FindPropertyDesc(const FInstancedPropertyBag& Bag, const FName Name)
+	{
+		const UPropertyBag* BagStruct = Bag.GetPropertyBagStruct();
+		if (!BagStruct)
+		{
+			return nullptr;
+		}
+		for (const FPropertyBagPropertyDesc& Desc : BagStruct->GetPropertyDescs())
+		{
+			if (Desc.Name == Name)
+			{
+				return &Desc;
+			}
+		}
+		return nullptr;
+	}
+
+	static bool SetBagValue(FInstancedPropertyBag& Bag, const FName Name, const TSharedPtr<FJsonValue>& ValueJson, FString& OutError)
+	{
+		if (!ValueJson.IsValid())
+		{
+			OutError = TEXT("value is required");
+			return false;
+		}
+
+		const FPropertyBagPropertyDesc* Desc = FindPropertyDesc(Bag, Name);
+		if (!Desc)
+		{
+			OutError = FString::Printf(TEXT("Parameter '%s' was not found"), *Name.ToString());
+			return false;
+		}
+
+		if (Desc->ContainerTypes.GetFirstContainerType() == EPropertyBagContainerType::Array)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+			if (!ValueJson->TryGetArray(Values) || !Values)
+			{
+				OutError = FString::Printf(TEXT("Parameter '%s' is an array; value must be a JSON array"), *Name.ToString());
+				return false;
+			}
+
+			TValueOrError<FPropertyBagArrayRef, EPropertyBagResult> ArrayResult = Bag.GetMutableArrayRef(*Desc);
+			if (!ArrayResult.IsValid())
+			{
+				OutError = FString::Printf(TEXT("Failed to access array parameter '%s': %s"), *Name.ToString(), *PropertyBagResultToString(ArrayResult.GetError()));
+				return false;
+			}
+
+			FPropertyBagArrayRef& ArrayRef = ArrayResult.GetValue();
+			ArrayRef.EmptyValues(Values->Num());
+			for (const TSharedPtr<FJsonValue>& Item : *Values)
+			{
+				if (!AddArrayValue(ArrayRef, *Desc, Item, OutError))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		if (!Desc->ContainerTypes.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("Parameter '%s' uses an unsupported container type"), *Name.ToString());
+			return false;
+		}
+
+		return SetBagScalarValue(Bag, Name, *Desc, ValueJson, OutError);
+	}
+
+	static TArray<TSharedPtr<FJsonValue>> BuildParametersJson(const FInstancedPropertyBag* UserParams)
+	{
+		TArray<TSharedPtr<FJsonValue>> ParametersArray;
+		if (!UserParams)
+		{
+			return ParametersArray;
+		}
+		const UPropertyBag* BagStruct = UserParams->GetPropertyBagStruct();
+		if (!BagStruct)
+		{
+			return ParametersArray;
+		}
+
+		for (const FPropertyBagPropertyDesc& Desc : BagStruct->GetPropertyDescs())
+		{
+			TSharedPtr<FJsonObject> ParamObj = MakeShared<FJsonObject>();
+			ParamObj->SetStringField(TEXT("name"), Desc.Name.ToString());
+			if (Desc.CachedProperty)
+			{
+				ParamObj->SetStringField(TEXT("cpp_type"), Desc.CachedProperty->GetCPPType());
+			}
+			if (const UEnum* PropTypeEnum = StaticEnum<EPropertyBagPropertyType>())
+			{
+				ParamObj->SetStringField(TEXT("type"), PropTypeEnum->GetNameStringByValue(static_cast<int64>(Desc.ValueType)));
+			}
+			if (const UEnum* ContainerTypeEnum = StaticEnum<EPropertyBagContainerType>())
+			{
+				ParamObj->SetStringField(TEXT("container"), ContainerTypeEnum->GetNameStringByValue(static_cast<int64>(Desc.ContainerTypes.GetFirstContainerType())));
+			}
+			if (Desc.ValueTypeObject)
+			{
+				ParamObj->SetStringField(TEXT("type_object"), Desc.ValueTypeObject->GetPathName());
+			}
+			ParametersArray.Add(MakeShared<FJsonValueObject>(ParamObj));
+		}
+		return ParametersArray;
+	}
+
+	static bool ResolvePropertyBagContainerType(const FString& ContainerName, EPropertyBagContainerType& OutContainerType, FString& OutError)
+	{
+		const FString NormalizedContainer = ContainerName.ToLower();
+		OutContainerType = EPropertyBagContainerType::None;
+		if (NormalizedContainer == TEXT("array"))
+		{
+			OutContainerType = EPropertyBagContainerType::Array;
+			return true;
+		}
+		if (NormalizedContainer.IsEmpty() || NormalizedContainer == TEXT("none"))
+		{
+			return true;
+		}
+
+		OutError = FString::Printf(TEXT("Unsupported container '%s'. Supported: none, array"), *ContainerName);
+		return false;
+	}
+
+	static TSharedPtr<FJsonObject> BuildGraphParameterResult(UPCGGraph* Graph, const FString& GraphPath, const FString& Name, const FString* NewName = nullptr)
+	{
+		TSharedPtr<FJsonObject> Out = MakeResult();
+		Out->SetStringField(TEXT("graph_path"), GraphPath);
+		Out->SetStringField(TEXT("name"), Name);
+		if (NewName)
+		{
+			Out->SetStringField(TEXT("new_name"), *NewName);
+		}
+		Out->SetArrayField(TEXT("parameters"), BuildParametersJson(Graph ? Graph->GetUserParametersStruct() : nullptr));
+		return Out;
 	}
 }
 
@@ -456,4 +1018,235 @@ FECACommandResult FECACommand_SetPCGNodeProperty::Execute(const TSharedPtr<FJson
 	Out->SetStringField(TEXT("property_name"), PropertyName);
 	Out->SetStringField(TEXT("property_type"), TypeName);
 	return FECACommandResult::Success(Out);
+}
+
+//==============================================================================
+// add_pcg_graph_parameter
+//==============================================================================
+FECACommandResult FECACommand_AddPCGGraphParameter::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath, Name, TypeName;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("name"), Name, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("name is required"));
+	}
+	if (!GetStringParam(Params, TEXT("type"), TypeName, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("type is required"));
+	}
+
+	FString ContainerName = TEXT("none");
+	FString ObjectClassName;
+	bool bOverwrite = false;
+	GetStringParam(Params, TEXT("container"), ContainerName, false);
+	GetStringParam(Params, TEXT("object_class"), ObjectClassName, false);
+	GetBoolParam(Params, TEXT("overwrite"), bOverwrite, false);
+	const TSharedPtr<FJsonValue> ValueJson = Params.IsValid() ? Params->TryGetField(TEXT("value")) : nullptr;
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	EPropertyBagPropertyType ValueType = EPropertyBagPropertyType::None;
+	const UObject* ValueTypeObject = nullptr;
+	FString Error;
+	if (!ECAPcgHelpers::ResolvePropertyBagType(TypeName, ObjectClassName, ValueType, ValueTypeObject, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	EPropertyBagContainerType ContainerType = EPropertyBagContainerType::None;
+	if (!ECAPcgHelpers::ResolvePropertyBagContainerType(ContainerName, ContainerType, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	Graph->Modify();
+	FString EditError;
+	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
+	{
+		const FName ParamName(*Name);
+		EPropertyBagAlterationResult AddResult = EPropertyBagAlterationResult::InternalError;
+		if (ContainerType == EPropertyBagContainerType::Array)
+		{
+			AddResult = Bag.AddContainerProperty(ParamName, ContainerType, ValueType, ValueTypeObject, bOverwrite);
+		}
+		else
+		{
+			AddResult = Bag.AddProperty(ParamName, ValueType, ValueTypeObject, bOverwrite);
+		}
+
+		if (!ECAPcgHelpers::IsSuccess(AddResult))
+		{
+			EditError = FString::Printf(TEXT("Failed to add parameter '%s': %s"), *Name, *ECAPcgHelpers::PropertyBagAlterationResultToString(AddResult));
+			return;
+		}
+
+		if (ValueJson.IsValid())
+		{
+			ECAPcgHelpers::SetBagValue(Bag, ParamName, ValueJson, EditError);
+		}
+	});
+
+	if (!EditError.IsEmpty())
+	{
+		return FECACommandResult::Error(EditError);
+	}
+
+	FString SaveError;
+	if (!ECAPcgHelpers::SaveAssetPackage(Graph, SaveError))
+	{
+		return FECACommandResult::Error(SaveError);
+	}
+
+	return FECACommandResult::Success(ECAPcgHelpers::BuildGraphParameterResult(Graph, GraphPath, Name));
+}
+
+//==============================================================================
+// rename_pcg_graph_parameter
+//==============================================================================
+FECACommandResult FECACommand_RenamePCGGraphParameter::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath, Name, NewName;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("name"), Name, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("name is required"));
+	}
+	if (!GetStringParam(Params, TEXT("new_name"), NewName, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("new_name is required"));
+	}
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	Graph->Modify();
+	FString EditError;
+	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
+	{
+		const EPropertyBagAlterationResult Result = Bag.RenameProperty(FName(*Name), FName(*NewName));
+		if (!ECAPcgHelpers::IsSuccess(Result))
+		{
+			EditError = FString::Printf(TEXT("Failed to rename parameter '%s' to '%s': %s"), *Name, *NewName, *ECAPcgHelpers::PropertyBagAlterationResultToString(Result));
+		}
+	});
+
+	if (!EditError.IsEmpty())
+	{
+		return FECACommandResult::Error(EditError);
+	}
+
+	FString SaveError;
+	if (!ECAPcgHelpers::SaveAssetPackage(Graph, SaveError))
+	{
+		return FECACommandResult::Error(SaveError);
+	}
+
+	return FECACommandResult::Success(ECAPcgHelpers::BuildGraphParameterResult(Graph, GraphPath, Name, &NewName));
+}
+
+//==============================================================================
+// remove_pcg_graph_parameter
+//==============================================================================
+FECACommandResult FECACommand_RemovePCGGraphParameter::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath, Name;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("name"), Name, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("name is required"));
+	}
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	Graph->Modify();
+	FString EditError;
+	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
+	{
+		const EPropertyBagAlterationResult Result = Bag.RemovePropertyByName(FName(*Name));
+		if (!ECAPcgHelpers::IsSuccess(Result))
+		{
+			EditError = FString::Printf(TEXT("Failed to remove parameter '%s': %s"), *Name, *ECAPcgHelpers::PropertyBagAlterationResultToString(Result));
+		}
+	});
+
+	if (!EditError.IsEmpty())
+	{
+		return FECACommandResult::Error(EditError);
+	}
+
+	FString SaveError;
+	if (!ECAPcgHelpers::SaveAssetPackage(Graph, SaveError))
+	{
+		return FECACommandResult::Error(SaveError);
+	}
+
+	return FECACommandResult::Success(ECAPcgHelpers::BuildGraphParameterResult(Graph, GraphPath, Name));
+}
+
+//==============================================================================
+// set_pcg_graph_parameter_default
+//==============================================================================
+FECACommandResult FECACommand_SetPCGGraphParameterDefault::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath, Name;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("name"), Name, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("name is required"));
+	}
+	const TSharedPtr<FJsonValue> ValueJson = Params.IsValid() ? Params->TryGetField(TEXT("value")) : nullptr;
+	if (!ValueJson.IsValid())
+	{
+		return FECACommandResult::ValidationError(this, TEXT("value is required"));
+	}
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	Graph->Modify();
+	FString EditError;
+	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
+	{
+		ECAPcgHelpers::SetBagValue(Bag, FName(*Name), ValueJson, EditError);
+	});
+
+	if (!EditError.IsEmpty())
+	{
+		return FECACommandResult::Error(EditError);
+	}
+
+	FString SaveError;
+	if (!ECAPcgHelpers::SaveAssetPackage(Graph, SaveError))
+	{
+		return FECACommandResult::Error(SaveError);
+	}
+
+	return FECACommandResult::Success(ECAPcgHelpers::BuildGraphParameterResult(Graph, GraphPath, Name));
 }

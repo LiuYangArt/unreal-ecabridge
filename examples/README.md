@@ -4,7 +4,7 @@ Drop-in demo projects for trying ECABridge in under a minute.
 
 ## HelloECA — the 60-second demo
 
-A minimal UE 5.8 project that has ECABridge wired up and nothing else. Open it, wait for the editor to load, and the MCP server is live on `:3000`. Perfect for verifying a fresh install, running smoke tests, or showing a teammate what the plugin does.
+A minimal UE 5.8 project that has ECABridge wired up and nothing else. Open it, wait for the editor to load, and the MCP server is live on `:8831`. Perfect for verifying a fresh install, running smoke tests, or showing a teammate what the plugin does.
 
 ### Setup
 
@@ -48,11 +48,11 @@ While the editor is loading, in another shell:
 
 ```bash
 # Wait for the MCP server to come up
-while ! curl -sf http://127.0.0.1:3000/health >/dev/null; do sleep 1; done
+while ! curl -sf http://127.0.0.1:8831/health >/dev/null; do sleep 1; done
 echo "ECABridge is live."
 
 # List tools — should be ~340+ (more if you enabled Mutable/MetaHuman/etc.)
-curl -s -X POST http://127.0.0.1:3000/mcp \
+curl -s -X POST http://127.0.0.1:8831/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1,"params":{}}' \
@@ -72,8 +72,8 @@ The intent is **zero distraction**: the project is the bare minimum required to 
 
 ### Recommended next steps
 
-1. Open the Output Log (Window → Output Log) and filter for `ECABridge` — you'll see the server bind to `:3000`.
-2. From an MCP client (Claude Desktop, Cursor, VS Code, or the EDA panel), register `http://127.0.0.1:3000/mcp` — see [`../docs/vscode/README.md`](../docs/vscode/README.md), [`../docs/cursor/README.md`](../docs/cursor/README.md), or [`../docs/EDA_INTEGRATION.md`](../docs/EDA_INTEGRATION.md).
+1. Open the Output Log (Window → Output Log) and filter for `ECABridge` — you'll see the server bind to `:8831`.
+2. From an MCP client (Claude Desktop, Cursor, VS Code, or the EDA panel), register `http://127.0.0.1:8831/mcp` — see [`../docs/vscode/README.md`](../docs/vscode/README.md), [`../docs/cursor/README.md`](../docs/cursor/README.md), or [`../docs/EDA_INTEGRATION.md`](../docs/EDA_INTEGRATION.md).
 3. Ask the agent: *"Find all actors in this level."* — it should call `find_actors` and return Epic's default `WorldDataLayers`, `WorldPartition`, etc.
 4. Drop a static mesh into the level, then ask: *"Dump the actor list with their world transforms."*
 

@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "ecabridge": {
-      "url": "http://127.0.0.1:3000/mcp",
+      "url": "http://127.0.0.1:8831/mcp",
       "headers": {
         "Accept": "application/json, text/event-stream"
       }

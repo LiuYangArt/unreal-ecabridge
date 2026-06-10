@@ -26,11 +26,13 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_URL = "http://127.0.0.1:3000/mcp"
-DEFAULT_EXAMPLES = SCRIPT_DIR / "command-examples.json"
 
-# Local import. Done lazily so --from-file works even without urllib.
+# Allow local helper imports when this file is imported from outside scripts/.
 sys.path.insert(0, str(SCRIPT_DIR))
+from eca_defaults import DEFAULT_MCP_URL
+
+DEFAULT_URL = DEFAULT_MCP_URL
+DEFAULT_EXAMPLES = SCRIPT_DIR / "command-examples.json"
 
 
 def load_tools_from_file(path: Path) -> list[dict[str, Any]]:

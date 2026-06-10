@@ -33,7 +33,7 @@ Blueprints / Niagara systems / etc. do not pollute the repo.
 ## How to run
 
 Pre-reqs:
-- ECABridge built and loaded; HTTP MCP responding on `:3000`
+- ECABridge built and loaded; HTTP MCP responding on `:8831`
 - All optional plugins enabled in `StressTest.uproject` (see Engine Compatibility wiki)
 - Agent identity has access to the KB design doc (lives outside this repo)
 

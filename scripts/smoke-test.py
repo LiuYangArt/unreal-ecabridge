@@ -2,7 +2,7 @@
 """ECABridge smoke test.
 
 Exercises ~20 commands across the major categories against a running
-ECABridge MCP server (default http://127.0.0.1:3000/mcp). Asserts response
+ECABridge MCP server. Asserts response
 shape - tools return content[0].text parseable as JSON with success=True
 and the expected top-level fields. Not CI-wired; intended as a fast manual
 sanity check after a deploy.
@@ -29,8 +29,10 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from eca_defaults import DEFAULT_MCP_URL
 
-DEFAULT_URL = "http://127.0.0.1:3000/mcp"
+
+DEFAULT_URL = DEFAULT_MCP_URL
 DEFAULT_BLUEPRINT = "/Game/FirstPerson/Blueprints/BP_FirstPersonCharacter"
 # Default port for Epic's native ModelContextProtocol plugin (5.8+ Experimental).
 # Used by --include-native to assert coexistence — see docs/EDA_INTEGRATION.md

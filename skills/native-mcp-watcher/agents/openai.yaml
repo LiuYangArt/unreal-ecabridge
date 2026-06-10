@@ -1,0 +1,4 @@
+interface:
+  display_name: "Native MCP Watcher"
+  short_description: "Track Epic native MCP changes safely"
+  default_prompt: "Use $native-mcp-watcher to compare Epic native MCP changes against ECABridge."

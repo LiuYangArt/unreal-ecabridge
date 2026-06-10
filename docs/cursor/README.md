@@ -33,7 +33,7 @@ Cursor's MCP config uses HTTP transport via the top-level `url` field — same s
 {
   "mcpServers": {
     "ecabridge": {
-      "url": "http://127.0.0.1:3000/mcp",
+      "url": "http://127.0.0.1:8831/mcp",
       "headers": {
         "Accept": "application/json, text/event-stream"
       }
@@ -57,7 +57,7 @@ If your Cursor build predates HTTP MCP support, wrap the HTTP server in a stdio 
   "mcpServers": {
     "ecabridge": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:3000/mcp"]
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8831/mcp"]
     }
   }
 }
@@ -72,7 +72,7 @@ Register both Epic's native MCP and ECABridge — Cursor merges toolsets and the
 ```json
 {
   "mcpServers": {
-    "ecabridge":     { "url": "http://127.0.0.1:3000/mcp", "headers": { "Accept": "application/json, text/event-stream" } },
+    "ecabridge":     { "url": "http://127.0.0.1:8831/mcp", "headers": { "Accept": "application/json, text/event-stream" } },
     "unreal-native": { "url": "http://127.0.0.1:8000/mcp", "headers": { "Accept": "application/json, text/event-stream" } }
   }
 }
@@ -80,12 +80,12 @@ Register both Epic's native MCP and ECABridge — Cursor merges toolsets and the
 
 ## Verifying
 
-1. Start UE with ECABridge enabled. Confirm `curl http://127.0.0.1:3000/health` returns a JSON with `commands` > 0.
+1. Start UE with ECABridge enabled. Confirm `curl http://127.0.0.1:8831/health` returns a JSON with `commands` > 0.
 2. Open Cursor, hit `Cmd/Ctrl-K` for the agent prompt, and ask: *"What's the actor count in the current UE level?"* Cursor should call ECABridge's `find_actors` or `get_scene_stats`.
 3. If you don't see ECABridge in the MCP server list, restart Cursor — config is read on startup.
 
 ## Troubleshooting
 
-- **"Connection refused"** — the editor isn't running or ECABridge failed to load. Check `Saved/Logs/<Project>.log` for `ECABridge: MCP server listening on :3000`.
+- **"Connection refused"** — the editor isn't running or ECABridge failed to load. Check `Saved/Logs/<Project>.log` for `ECABridge: MCP server listening on :8831`.
 - **"Schema validation error"** — Cursor sometimes rewrites tool inputs. ECABridge returns the full JSON Schema in the error response — paste it back to the agent and ask it to retry with corrected arguments.
 - **Cursor hangs on first call** — Cursor caches the tool list on first connect. Large surfaces (~400 tools, ~330 KB) can take ~1 s. Subsequent calls are fast.

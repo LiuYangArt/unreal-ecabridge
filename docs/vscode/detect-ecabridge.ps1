@@ -1,7 +1,7 @@
 # detect-ecabridge.ps1 — probe a running ECABridge server and write a VS Code MCP config.
 #
 # Usage:
-#   powershell -File detect-ecabridge.ps1 [-Port 3000] [-OutFile .vscode/mcp.json]
+#   powershell -File detect-ecabridge.ps1 [-Port 8831] [-OutFile .vscode/mcp.json]
 #
 # Exit codes:
 #   0 — server detected, config written
@@ -9,7 +9,7 @@
 #   2 — config write failed
 
 param(
-    [int]$Port = 3000,
+    [int]$Port = 8831,
     [string]$OutFile = ".vscode/mcp.json"
 )
 

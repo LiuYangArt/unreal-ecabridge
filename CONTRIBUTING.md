@@ -109,7 +109,7 @@ We don't ship a CI runner with UE installed yet (see
 powershell -File scripts\build-deploy.ps1 -Engine 5.8
 
 # Confirm the server is up
-curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:8831/health
 
 # Smoke-test the surface
 python scripts\smoke-test.py
