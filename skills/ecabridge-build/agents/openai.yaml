@@ -1,0 +1,4 @@
+interface:
+  display_name: "ECABridge Build"
+  short_description: "Build and verify ECABridge in UE projects"
+  default_prompt: "Use $ecabridge-build to compile ECABridge for my Unreal project and verify the MCP port."
