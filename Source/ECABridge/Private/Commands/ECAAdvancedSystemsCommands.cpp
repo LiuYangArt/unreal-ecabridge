@@ -28,6 +28,14 @@
 #include "Rigs/RigHierarchyDefines.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "TransformNoScale.h"
+#include "RigVMCore/RigVMStruct.h"
+#include "RigVMModel/RigVMController.h"
+#include "RigVMModel/RigVMGraph.h"
+#include "RigVMModel/RigVMLink.h"
+#include "RigVMModel/RigVMNode.h"
+#include "RigVMModel/RigVMPin.h"
+#include "RigVMModel/Nodes/RigVMUnitNode.h"
+
 #endif // WITH_ECA_CONTROL_RIG
 
 #if WITH_ECA_GAMEPLAY_ABILITIES
@@ -47,6 +55,11 @@ REGISTER_ECA_COMMAND(FECACommand_AddControlRigControl)
 REGISTER_ECA_COMMAND(FECACommand_SetControlRigElementTransform)
 REGISTER_ECA_COMMAND(FECACommand_RenameControlRigElement)
 REGISTER_ECA_COMMAND(FECACommand_RemoveControlRigElement)
+REGISTER_ECA_COMMAND(FECACommand_AddControlRigUnitNode)
+REGISTER_ECA_COMMAND(FECACommand_RemoveControlRigGraphNode)
+REGISTER_ECA_COMMAND(FECACommand_SetControlRigPinDefault)
+REGISTER_ECA_COMMAND(FECACommand_ConnectControlRigPins)
+REGISTER_ECA_COMMAND(FECACommand_DisconnectControlRigPins)
 #endif
 #if WITH_ECA_GAMEPLAY_ABILITIES
 REGISTER_ECA_COMMAND(FECACommand_DumpGameplayAbility)
@@ -706,6 +719,193 @@ namespace ECAControlRigHelpers
 		return Obj;
 	}
 
+	struct FRigGraphEditContext
+	{
+		UControlRigBlueprint* RigBlueprint = nullptr;
+		URigVMGraph* Graph = nullptr;
+		URigVMController* Controller = nullptr;
+	};
+
+	static FString PinDirectionToString(ERigVMPinDirection Direction)
+	{
+		const UEnum* DirectionEnum = StaticEnum<ERigVMPinDirection>();
+		return DirectionEnum ? DirectionEnum->GetNameStringByValue(static_cast<int64>(Direction)) : TEXT("Unknown");
+	}
+
+	static FString GetRigGraphDisplayName(const URigVMGraph* Graph)
+	{
+		if (!Graph)
+		{
+			return TEXT("");
+		}
+		const FString GraphName = Graph->GetGraphName();
+		return GraphName.IsEmpty() ? Graph->GetName() : GraphName;
+	}
+
+	static bool LoadRigGraphEditContext(const FString& RigPath, const FString& GraphName, FRigGraphEditContext& OutContext, FString& OutError)
+	{
+		OutContext.RigBlueprint = LoadRigBlueprint(RigPath, OutError);
+		if (!OutContext.RigBlueprint)
+		{
+			return false;
+		}
+
+		OutContext.Graph = GraphName.IsEmpty()
+			? OutContext.RigBlueprint->GetDefaultModel()
+			: OutContext.RigBlueprint->GetModel(GraphName);
+		if (!OutContext.Graph)
+		{
+			OutError = GraphName.IsEmpty()
+				? TEXT("ControlRig RigVM default graph is null")
+				: FString::Printf(TEXT("ControlRig RigVM graph not found: %s"), *GraphName);
+			return false;
+		}
+
+		OutContext.Controller = OutContext.RigBlueprint->GetOrCreateController(OutContext.Graph);
+		if (!OutContext.Controller)
+		{
+			OutError = FString::Printf(TEXT("ControlRig RigVM controller is null for graph: %s"), *GetRigGraphDisplayName(OutContext.Graph));
+			return false;
+		}
+		return true;
+	}
+
+	static void ModifyRigGraphForEdit(const FRigGraphEditContext& Context)
+	{
+		static_cast<UBlueprint*>(Context.RigBlueprint)->Modify();
+		Context.Graph->Modify();
+		Context.Controller->Modify();
+	}
+
+	static bool ReadGraphPosition(const TSharedPtr<FJsonObject>& Params, FVector2D& OutPosition, FString& OutError)
+	{
+		OutPosition = FVector2D::ZeroVector;
+		const TSharedPtr<FJsonObject>* PositionObj = nullptr;
+		if (!Params.IsValid() || !Params->TryGetObjectField(TEXT("position"), PositionObj))
+		{
+			return true;
+		}
+		if (!PositionObj || !PositionObj->IsValid())
+		{
+			OutError = TEXT("position must be an object with x and y");
+			return false;
+		}
+
+		double X = 0.0;
+		double Y = 0.0;
+		if (!(*PositionObj)->TryGetNumberField(TEXT("x"), X) || !(*PositionObj)->TryGetNumberField(TEXT("y"), Y))
+		{
+			OutError = TEXT("position must include numeric x and y");
+			return false;
+		}
+		OutPosition = FVector2D(X, Y);
+		return true;
+	}
+
+	static UScriptStruct* ResolveRigVMUnitScriptStruct(const FString& StructText, FString& OutError)
+	{
+		if (StructText.IsEmpty())
+		{
+			OutError = TEXT("script_struct is required");
+			return nullptr;
+		}
+
+		UScriptStruct* ScriptStruct = LoadObject<UScriptStruct>(nullptr, *StructText);
+		if (!ScriptStruct)
+		{
+			ScriptStruct = FindObject<UScriptStruct>(nullptr, *StructText);
+		}
+		if (!ScriptStruct)
+		{
+			for (TObjectIterator<UScriptStruct> It; It; ++It)
+			{
+				UScriptStruct* Candidate = *It;
+				if (Candidate && (Candidate->GetName() == StructText || Candidate->GetPathName() == StructText))
+				{
+					ScriptStruct = Candidate;
+					break;
+				}
+			}
+		}
+
+		if (!ScriptStruct)
+		{
+			OutError = FString::Printf(TEXT("RigVM unit script struct not found: %s"), *StructText);
+			return nullptr;
+		}
+		if (!ScriptStruct->IsChildOf(FRigVMStruct::StaticStruct()))
+		{
+			OutError = FString::Printf(TEXT("Script struct is not a RigVM unit struct: %s"), *ScriptStruct->GetPathName());
+			return nullptr;
+		}
+		return ScriptStruct;
+	}
+
+	static TSharedPtr<FJsonObject> PinToJson(const URigVMPin* Pin)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		if (!Pin)
+		{
+			return Obj;
+		}
+
+		Obj->SetStringField(TEXT("name"), Pin->GetName());
+		Obj->SetStringField(TEXT("pin_path"), Pin->GetPinPath());
+		Obj->SetStringField(TEXT("direction"), PinDirectionToString(Pin->GetDirection()));
+		Obj->SetStringField(TEXT("cpp_type"), Pin->GetCPPType());
+		Obj->SetStringField(TEXT("default_value"), Pin->GetDefaultValue());
+
+		TArray<TSharedPtr<FJsonValue>> SubPins;
+		for (const URigVMPin* SubPin : Pin->GetSubPins())
+		{
+			SubPins.Add(MakeShared<FJsonValueObject>(PinToJson(SubPin)));
+		}
+		Obj->SetArrayField(TEXT("sub_pins"), SubPins);
+		return Obj;
+	}
+
+	static TSharedPtr<FJsonObject> NodeToJson(const URigVMNode* Node)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		if (!Node)
+		{
+			return Obj;
+		}
+
+		const FVector2D Position = Node->GetPosition();
+		TSharedPtr<FJsonObject> PositionObj = MakeShared<FJsonObject>();
+		PositionObj->SetNumberField(TEXT("x"), Position.X);
+		PositionObj->SetNumberField(TEXT("y"), Position.Y);
+
+		Obj->SetStringField(TEXT("name"), Node->GetName());
+		Obj->SetStringField(TEXT("node_path"), Node->GetNodePath());
+		Obj->SetStringField(TEXT("title"), Node->GetNodeTitle());
+		Obj->SetObjectField(TEXT("position"), PositionObj);
+
+		TArray<TSharedPtr<FJsonValue>> Pins;
+		for (const URigVMPin* Pin : Node->GetPins())
+		{
+			Pins.Add(MakeShared<FJsonValueObject>(PinToJson(Pin)));
+		}
+		Obj->SetArrayField(TEXT("pins"), Pins);
+		return Obj;
+	}
+
+	static TSharedPtr<FJsonObject> LinkPathToJson(const FString& SourcePinPath, const FString& TargetPinPath)
+	{
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("source_pin_path"), SourcePinPath);
+		Obj->SetStringField(TEXT("target_pin_path"), TargetPinPath);
+		Obj->SetStringField(TEXT("pin_path_representation"), URigVMLink::GetPinPathRepresentation(SourcePinPath, TargetPinPath));
+		return Obj;
+	}
+
+	static TSharedPtr<FJsonObject> LinkToJson(const URigVMLink* Link)
+	{
+		return Link
+			? LinkPathToJson(Link->GetSourcePinPath(), Link->GetTargetPinPath())
+			: MakeShared<FJsonObject>();
+	}
 	static void MarkRigModified(UControlRigBlueprint* RigBlueprint)
 	{
 		if (!RigBlueprint)
@@ -1158,6 +1358,262 @@ FECACommandResult FECACommand_RemoveControlRigElement::Execute(const TSharedPtr<
 	return FECACommandResult::Success(Result);
 }
 
+
+
+FECACommandResult FECACommand_AddControlRigUnitNode::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	using namespace ECAControlRigHelpers;
+
+	FString RigPath;
+	FString StructText;
+	if (!GetStringParam(Params, TEXT("rig_path"), RigPath, true))
+	{
+		return FECACommandResult::Error(TEXT("rig_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("script_struct"), StructText, true))
+	{
+		return FECACommandResult::Error(TEXT("script_struct is required"));
+	}
+
+	FString Error;
+	UScriptStruct* ScriptStruct = ResolveRigVMUnitScriptStruct(StructText, Error);
+	if (!ScriptStruct)
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	FString GraphName;
+	GetStringParam(Params, TEXT("graph_name"), GraphName, false);
+	FRigGraphEditContext Context;
+	if (!LoadRigGraphEditContext(RigPath, GraphName, Context, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	FVector2D Position;
+	if (!ReadGraphPosition(Params, Position, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	FString MethodNameText;
+	FString NodeName;
+	GetStringParam(Params, TEXT("method_name"), MethodNameText, false);
+	GetStringParam(Params, TEXT("node_name"), NodeName, false);
+	const FName MethodName = MethodNameText.IsEmpty() ? TEXT("Execute") : FName(*MethodNameText);
+
+	ModifyRigGraphForEdit(Context);
+	URigVMUnitNode* Node = Context.Controller->AddUnitNode(ScriptStruct, MethodName, Position, NodeName, true, false);
+	if (!Node)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Failed to add ControlRig RigVM unit node for struct: %s"), *ScriptStruct->GetPathName()));
+	}
+	MarkRigModified(Context.RigBlueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("rig_path"), RigPath);
+	Result->SetStringField(TEXT("graph_name"), GetRigGraphDisplayName(Context.Graph));
+	Result->SetObjectField(TEXT("node"), NodeToJson(Node));
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_RemoveControlRigGraphNode::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	using namespace ECAControlRigHelpers;
+
+	FString RigPath;
+	FString NodeName;
+	if (!GetStringParam(Params, TEXT("rig_path"), RigPath, true))
+	{
+		return FECACommandResult::Error(TEXT("rig_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("node_name"), NodeName, true))
+	{
+		return FECACommandResult::Error(TEXT("node_name is required"));
+	}
+
+	FString GraphName;
+	GetStringParam(Params, TEXT("graph_name"), GraphName, false);
+	FString Error;
+	FRigGraphEditContext Context;
+	if (!LoadRigGraphEditContext(RigPath, GraphName, Context, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+	if (!Context.Graph->FindNodeByName(*NodeName))
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("ControlRig RigVM node not found: %s"), *NodeName));
+	}
+
+	ModifyRigGraphForEdit(Context);
+	const bool bRemoved = Context.Controller->RemoveNodeByName(*NodeName, true, false);
+	if (!bRemoved)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Failed to remove ControlRig RigVM node: %s"), *NodeName));
+	}
+	MarkRigModified(Context.RigBlueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("rig_path"), RigPath);
+	Result->SetStringField(TEXT("graph_name"), GetRigGraphDisplayName(Context.Graph));
+	Result->SetBoolField(TEXT("removed"), true);
+	Result->SetStringField(TEXT("node_name"), NodeName);
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_SetControlRigPinDefault::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	using namespace ECAControlRigHelpers;
+
+	FString RigPath;
+	FString PinPath;
+	FString DefaultValue;
+	if (!GetStringParam(Params, TEXT("rig_path"), RigPath, true))
+	{
+		return FECACommandResult::Error(TEXT("rig_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("pin_path"), PinPath, true))
+	{
+		return FECACommandResult::Error(TEXT("pin_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("default_value"), DefaultValue, true))
+	{
+		return FECACommandResult::Error(TEXT("default_value is required"));
+	}
+
+	FString GraphName;
+	GetStringParam(Params, TEXT("graph_name"), GraphName, false);
+	FString Error;
+	FRigGraphEditContext Context;
+	if (!LoadRigGraphEditContext(RigPath, GraphName, Context, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	URigVMPin* Pin = Context.Graph->FindPin(PinPath);
+	if (!Pin)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("ControlRig RigVM pin not found: %s"), *PinPath));
+	}
+
+	bool bResizeArrays = true;
+	bool bSetLinkedPins = true;
+	GetBoolParam(Params, TEXT("resize_arrays"), bResizeArrays, false);
+	GetBoolParam(Params, TEXT("set_linked_pins"), bSetLinkedPins, false);
+
+	ModifyRigGraphForEdit(Context);
+	const bool bSet = Context.Controller->SetPinDefaultValue(PinPath, DefaultValue, bResizeArrays, true, false, false, bSetLinkedPins);
+	if (!bSet)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Failed to set ControlRig RigVM pin default: %s"), *PinPath));
+	}
+	MarkRigModified(Context.RigBlueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("rig_path"), RigPath);
+	Result->SetStringField(TEXT("graph_name"), GetRigGraphDisplayName(Context.Graph));
+	Result->SetObjectField(TEXT("pin"), PinToJson(Pin));
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_ConnectControlRigPins::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	using namespace ECAControlRigHelpers;
+
+	FString RigPath;
+	FString OutputPinPath;
+	FString InputPinPath;
+	if (!GetStringParam(Params, TEXT("rig_path"), RigPath, true))
+	{
+		return FECACommandResult::Error(TEXT("rig_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("output_pin_path"), OutputPinPath, true))
+	{
+		return FECACommandResult::Error(TEXT("output_pin_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("input_pin_path"), InputPinPath, true))
+	{
+		return FECACommandResult::Error(TEXT("input_pin_path is required"));
+	}
+
+	FString GraphName;
+	GetStringParam(Params, TEXT("graph_name"), GraphName, false);
+	FString Error;
+	FRigGraphEditContext Context;
+	if (!LoadRigGraphEditContext(RigPath, GraphName, Context, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	bool bCreateCastNode = false;
+	GetBoolParam(Params, TEXT("create_cast_node"), bCreateCastNode, false);
+
+	ModifyRigGraphForEdit(Context);
+	const bool bLinked = Context.Controller->AddLink(OutputPinPath, InputPinPath, true, false, ERigVMPinDirection::Output, bCreateCastNode);
+	if (!bLinked)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Failed to connect ControlRig RigVM pins: %s -> %s"), *OutputPinPath, *InputPinPath));
+	}
+	MarkRigModified(Context.RigBlueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("rig_path"), RigPath);
+	Result->SetStringField(TEXT("graph_name"), GetRigGraphDisplayName(Context.Graph));
+	const FString LinkPath = URigVMLink::GetPinPathRepresentation(OutputPinPath, InputPinPath);
+	const URigVMLink* Link = Context.Graph->FindLink(LinkPath);
+	Result->SetObjectField(TEXT("link"), Link ? LinkToJson(Link) : LinkPathToJson(OutputPinPath, InputPinPath));
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_DisconnectControlRigPins::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	using namespace ECAControlRigHelpers;
+
+	FString RigPath;
+	FString OutputPinPath;
+	FString InputPinPath;
+	if (!GetStringParam(Params, TEXT("rig_path"), RigPath, true))
+	{
+		return FECACommandResult::Error(TEXT("rig_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("output_pin_path"), OutputPinPath, true))
+	{
+		return FECACommandResult::Error(TEXT("output_pin_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("input_pin_path"), InputPinPath, true))
+	{
+		return FECACommandResult::Error(TEXT("input_pin_path is required"));
+	}
+
+	FString GraphName;
+	GetStringParam(Params, TEXT("graph_name"), GraphName, false);
+	FString Error;
+	FRigGraphEditContext Context;
+	if (!LoadRigGraphEditContext(RigPath, GraphName, Context, Error))
+	{
+		return FECACommandResult::Error(Error);
+	}
+	if (!Context.Graph->FindLink(URigVMLink::GetPinPathRepresentation(OutputPinPath, InputPinPath)))
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("ControlRig RigVM link not found: %s -> %s"), *OutputPinPath, *InputPinPath));
+	}
+
+	ModifyRigGraphForEdit(Context);
+	const bool bDisconnected = Context.Controller->BreakLink(OutputPinPath, InputPinPath, true, false);
+	if (!bDisconnected)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Failed to disconnect ControlRig RigVM pins: %s -> %s"), *OutputPinPath, *InputPinPath));
+	}
+	MarkRigModified(Context.RigBlueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("rig_path"), RigPath);
+	Result->SetStringField(TEXT("graph_name"), GetRigGraphDisplayName(Context.Graph));
+	Result->SetBoolField(TEXT("disconnected"), true);
+	Result->SetStringField(TEXT("output_pin_path"), OutputPinPath);
+	Result->SetStringField(TEXT("input_pin_path"), InputPinPath);
+	return FECACommandResult::Success(Result);
+}
 #endif // WITH_ECA_CONTROL_RIG
 
 #if WITH_ECA_GAMEPLAY_ABILITIES

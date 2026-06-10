@@ -233,6 +233,173 @@ public:
 
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
+
+/**
+ * Add a RigVM unit node to a Control Rig graph.
+ */
+class FECACommand_AddControlRigUnitNode : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("add_control_rig_unit_node"); }
+	virtual FString GetDescription() const override { return TEXT("Add a RigVM unit node to a Control Rig graph. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("script_struct"), TEXT("string"), TEXT("RigVM unit script struct path or name"), true },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Optional RigVM graph name; defaults to the main graph"), false },
+			{ TEXT("method_name"), TEXT("string"), TEXT("RigVM method name; defaults to Execute"), false },
+			{ TEXT("node_name"), TEXT("string"), TEXT("Optional node name"), false },
+			{ TEXT("position"), TEXT("object"), TEXT("Optional graph position {x,y}"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Edited RigVM graph") },
+			{ TEXT("node"), TEXT("object"), TEXT("Created RigVM node") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Remove a RigVM node from a Control Rig graph.
+ */
+class FECACommand_RemoveControlRigGraphNode : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("remove_control_rig_graph_node"); }
+	virtual FString GetDescription() const override { return TEXT("Remove a RigVM node from a Control Rig graph. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("node_name"), TEXT("string"), TEXT("RigVM node name"), true },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Optional RigVM graph name; defaults to the main graph"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Edited RigVM graph") },
+			{ TEXT("removed"), TEXT("boolean"), TEXT("Whether the node was removed") },
+			{ TEXT("node_name"), TEXT("string"), TEXT("Removed node name") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Set a RigVM pin default value in a Control Rig graph.
+ */
+class FECACommand_SetControlRigPinDefault : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_control_rig_pin_default"); }
+	virtual FString GetDescription() const override { return TEXT("Set a RigVM pin default value in a Control Rig graph. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("pin_path"), TEXT("string"), TEXT("RigVM pin path, for example Node.Pin.SubPin"), true },
+			{ TEXT("default_value"), TEXT("string"), TEXT("RigVM pin default value string"), true },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Optional RigVM graph name; defaults to the main graph"), false },
+			{ TEXT("resize_arrays"), TEXT("boolean"), TEXT("Whether array defaults may resize arrays"), false },
+			{ TEXT("set_linked_pins"), TEXT("boolean"), TEXT("Whether linked pins receive the value too"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Edited RigVM graph") },
+			{ TEXT("pin"), TEXT("object"), TEXT("Updated RigVM pin") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Connect two RigVM pins in a Control Rig graph.
+ */
+class FECACommand_ConnectControlRigPins : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("connect_control_rig_pins"); }
+	virtual FString GetDescription() const override { return TEXT("Connect two RigVM pins in a Control Rig graph. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("output_pin_path"), TEXT("string"), TEXT("Source/output RigVM pin path"), true },
+			{ TEXT("input_pin_path"), TEXT("string"), TEXT("Target/input RigVM pin path"), true },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Optional RigVM graph name; defaults to the main graph"), false },
+			{ TEXT("create_cast_node"), TEXT("boolean"), TEXT("Whether RigVM may create a cast node"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Edited RigVM graph") },
+			{ TEXT("link"), TEXT("object"), TEXT("Created RigVM link") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Disconnect two RigVM pins in a Control Rig graph.
+ */
+class FECACommand_DisconnectControlRigPins : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("disconnect_control_rig_pins"); }
+	virtual FString GetDescription() const override { return TEXT("Disconnect two RigVM pins in a Control Rig graph. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("output_pin_path"), TEXT("string"), TEXT("Source/output RigVM pin path"), true },
+			{ TEXT("input_pin_path"), TEXT("string"), TEXT("Target/input RigVM pin path"), true },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Optional RigVM graph name; defaults to the main graph"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Path of the Control Rig asset") },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Edited RigVM graph") },
+			{ TEXT("disconnected"), TEXT("boolean"), TEXT("Whether the link was disconnected") },
+			{ TEXT("output_pin_path"), TEXT("string"), TEXT("Disconnected source pin") },
+			{ TEXT("input_pin_path"), TEXT("string"), TEXT("Disconnected target pin") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
 #endif // WITH_ECA_CONTROL_RIG
 
 #if WITH_ECA_GAMEPLAY_ABILITIES

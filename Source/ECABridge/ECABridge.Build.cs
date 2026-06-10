@@ -289,12 +289,14 @@ public class ECABridge : ModuleRules
 			PublicDefinitions.Add("WITH_ECA_METASOUND=0");
 		}
 
-		// Control Rig (animation rigging, 1 dump command)
+		// Control Rig (animation rigging and RigVM graph editing)
 		if (EngineHasPlugin("ControlRig"))
 		{
-			PrivateDependencyModuleNames.AddRange(new string[] { "ControlRig", "ControlRigDeveloper" });
+			PrivateDependencyModuleNames.AddRange(new string[] { "ControlRig", "ControlRigDeveloper", "RigVM", "RigVMDeveloper" });
 			AddDelayLoadDLL("UnrealEditor-ControlRig.dll");
 			AddDelayLoadDLL("UnrealEditor-ControlRigDeveloper.dll");
+			AddDelayLoadDLL("UnrealEditor-RigVM.dll");
+			AddDelayLoadDLL("UnrealEditor-RigVMDeveloper.dll");
 			PublicDefinitions.Add("WITH_ECA_CONTROL_RIG=1");
 		}
 		else
