@@ -3841,122 +3841,153 @@ FECACommandResult FECACommand_AutoLayoutBlueprintGraph::Execute(const TSharedPtr
 	{
 		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: blueprint_path"));
 	}
-	
+
 	UBlueprint* Blueprint = LoadBlueprintByPath(BlueprintPath);
 	if (!Blueprint)
 	{
 		return FECACommandResult::Error(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintPath));
 	}
-	
+
 	FString GraphName = TEXT("EventGraph");
 	GetStringParam(Params, TEXT("graph_name"), GraphName, false);
-	
+
 	UEdGraph* Graph = FindGraphByName(Blueprint, GraphName);
 	if (!Graph)
 	{
 		return FECACommandResult::Error(FString::Printf(TEXT("Graph not found: %s"), *GraphName));
 	}
-	
-	// Get layout configuration (uses padding-based system now)
+
+	TArray<FString> Warnings;
+	FString LayoutEngine = TEXT("layered");
+	GetStringParam(Params, TEXT("layout_engine"), LayoutEngine, false);
+	if (LayoutEngine.Equals(TEXT("legacy_tree"), ESearchCase::IgnoreCase))
+	{
+		Warnings.Add(TEXT("legacy_tree_aliases_layered"));
+		LayoutEngine = TEXT("layered");
+	}
+	else if (!LayoutEngine.Equals(TEXT("layered"), ESearchCase::IgnoreCase))
+	{
+		return FECACommandResult::ValidationError(this, FString::Printf(TEXT("Unsupported layout_engine: %s"), *LayoutEngine));
+	}
+
 	FBlueprintLayoutConfig Config;
-	GetIntParam(Params, TEXT("padding_x"), Config.NodePaddingX, false);
-	GetIntParam(Params, TEXT("padding_y"), Config.NodePaddingY, false);
-	GetIntParam(Params, TEXT("branch_padding"), Config.BranchExtraPaddingY, false);
-	GetIntParam(Params, TEXT("root_padding"), Config.RootExtraPaddingY, false);
-	GetIntParam(Params, TEXT("max_pure_per_column"), Config.MaxPureNodesPerColumn, false);
-	
-	// Get starting position
+	int32 LegacySpacingX = 0;
+	int32 LegacySpacingY = 0;
+	if (!GetIntParam(Params, TEXT("padding_x"), Config.NodePaddingX, false)
+		&& GetIntParam(Params, TEXT("spacing_x"), LegacySpacingX, false))
+	{
+		Config.NodePaddingX = LegacySpacingX;
+		Warnings.Add(TEXT("spacing_x_is_deprecated_use_padding_x"));
+	}
+	if (!GetIntParam(Params, TEXT("padding_y"), Config.NodePaddingY, false)
+		&& GetIntParam(Params, TEXT("spacing_y"), LegacySpacingY, false))
+	{
+		Config.NodePaddingY = LegacySpacingY;
+		Warnings.Add(TEXT("spacing_y_is_deprecated_use_padding_y"));
+	}
+	GetBoolParam(Params, TEXT("align_comments"), Config.bAlignComments, false);
+	GetBoolParam(Params, TEXT("materialize_long_edges"), Config.bMaterializeLongEdges, false);
+
+	FString Strategy;
+	if (GetStringParam(Params, TEXT("strategy"), Strategy, false) && !Strategy.IsEmpty())
+	{
+		Warnings.Add(TEXT("strategy_is_deprecated_routes_to_layered"));
+	}
+
+	bool bSelectedOnly = false;
+	if (GetBoolParam(Params, TEXT("selected_only"), bSelectedOnly, false) && bSelectedOnly)
+	{
+		Warnings.Add(TEXT("selected_only_is_deprecated_use_node_ids"));
+	}
+
 	int32 StartX = 0;
 	int32 StartY = 0;
 	GetIntParam(Params, TEXT("start_x"), StartX, false);
 	GetIntParam(Params, TEXT("start_y"), StartY, false);
-	
-	// Check for legacy strategy parameter - log warning if old strategies used
-	FString Strategy;
-	if (GetStringParam(Params, TEXT("strategy"), Strategy, false))
-	{
-		if (Strategy == TEXT("vertical") || Strategy == TEXT("compact"))
-		{
-			// These old strategies are deprecated - use the new algorithm
-			UE_LOG(LogTemp, Warning, TEXT("AutoLayoutBlueprintGraph: '%s' strategy is deprecated. Using improved tree-based layout."), *Strategy);
-		}
-	}
-	
-	// Get specific node IDs if provided (for partial layout)
+
 	TArray<UEdGraphNode*> SpecificNodes;
-	const TArray<TSharedPtr<FJsonValue>>* NodeIdsArray;
+	const TArray<TSharedPtr<FJsonValue>>* NodeIdsArray = nullptr;
 	if (GetArrayParam(Params, TEXT("node_ids"), NodeIdsArray, false) && NodeIdsArray)
 	{
 		for (const TSharedPtr<FJsonValue>& IdValue : *NodeIdsArray)
 		{
 			FString IdStr;
-			if (IdValue->TryGetString(IdStr))
+			if (!IdValue.IsValid() || !IdValue->TryGetString(IdStr))
 			{
-				FGuid Guid;
-				if (FGuid::Parse(IdStr, Guid))
-				{
-					for (UEdGraphNode* Node : Graph->Nodes)
-					{
-						if (Node && Node->NodeGuid == Guid)
-						{
-							SpecificNodes.Add(Node);
-							break;
-						}
-					}
-				}
+				continue;
+			}
+			FGuid Guid;
+			if (!FGuid::Parse(IdStr, Guid))
+			{
+				Warnings.Add(FString::Printf(TEXT("invalid_node_id:%s"), *IdStr));
+				continue;
+			}
+			if (UEdGraphNode* Node = FindNodeByGuid(Graph, Guid))
+			{
+				SpecificNodes.Add(Node);
+			}
+			else
+			{
+				Warnings.Add(FString::Printf(TEXT("node_not_found:%s"), *IdStr));
 			}
 		}
 	}
-	
-	// Run the layout algorithm
+
 	FBlueprintAutoLayout Layouter(Config);
-	int32 NodesPositioned = 0;
-	
-	if (SpecificNodes.Num() > 0)
-	{
-		NodesPositioned = Layouter.LayoutSubtree(Graph, SpecificNodes, StartX, StartY);
-	}
-	else
-	{
-		NodesPositioned = Layouter.LayoutGraph(Graph, StartX, StartY);
-	}
-	
-	// Mark blueprint as modified
+	const int32 NodesPositioned = SpecificNodes.Num() > 0
+		? Layouter.LayoutSubtree(Graph, SpecificNodes, StartX, StartY)
+		: Layouter.LayoutGraph(Graph, StartX, StartY);
+
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-	
-	// Build result
+
 	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("blueprint_path"), BlueprintPath);
 	Result->SetStringField(TEXT("graph_name"), GraphName);
+	Result->SetStringField(TEXT("layout_engine"), TEXT("layered"));
 	Result->SetNumberField(TEXT("nodes_positioned"), NodesPositioned);
+	Result->SetNumberField(TEXT("comments_wrapped"), Layouter.GetCommentsWrapped());
+	Result->SetNumberField(TEXT("auto_knots_removed"), Layouter.GetAutoKnotsRemoved());
+	Result->SetNumberField(TEXT("auto_knots_created"), Layouter.GetAutoKnotsCreated());
+	Result->SetNumberField(TEXT("edge_count"), Layouter.GetEdgeCount());
+	Result->SetNumberField(TEXT("rank_count"), Layouter.GetRankCount());
 	Result->SetNumberField(TEXT("padding_x"), Config.NodePaddingX);
 	Result->SetNumberField(TEXT("padding_y"), Config.NodePaddingY);
-	
-	// Include positioned node info
+
+	TArray<TSharedPtr<FJsonValue>> WarningArray;
+	Warnings.Append(Layouter.GetWarnings());
+	for (const FString& Warning : Warnings)
+	{
+		WarningArray.Add(MakeShared<FJsonValueString>(Warning));
+	}
+	Result->SetArrayField(TEXT("warnings"), WarningArray);
+
 	TArray<TSharedPtr<FJsonValue>> PositionedNodesArray;
 	const TMap<UEdGraphNode*, FLayoutNodeInfo>& LayoutInfo = Layouter.GetLayoutInfo();
-	
 	for (const auto& Pair : LayoutInfo)
 	{
 		UEdGraphNode* Node = Pair.Key;
 		const FLayoutNodeInfo& Info = Pair.Value;
-		
+		if (!Node || !Info.bPositioned)
+		{
+			continue;
+		}
+
 		TSharedPtr<FJsonObject> NodeInfo = MakeShared<FJsonObject>();
 		NodeInfo->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString());
 		NodeInfo->SetStringField(TEXT("node_title"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
 		NodeInfo->SetNumberField(TEXT("x"), Node->NodePosX);
 		NodeInfo->SetNumberField(TEXT("y"), Node->NodePosY);
-		NodeInfo->SetNumberField(TEXT("depth"), Info.Depth);
-		NodeInfo->SetNumberField(TEXT("subtree_height"), Info.SubtreeHeight);
+		NodeInfo->SetNumberField(TEXT("rank"), Info.Depth);
+		NodeInfo->SetNumberField(TEXT("width"), Info.NodeWidth);
+		NodeInfo->SetNumberField(TEXT("height"), Info.NodeHeight);
 		NodeInfo->SetBoolField(TEXT("is_pure"), Info.bIsPureNode);
 		NodeInfo->SetBoolField(TEXT("is_branch"), Info.bIsBranchNode);
-		NodeInfo->SetBoolField(TEXT("is_root"), Info.bIsRootNode);
 		PositionedNodesArray.Add(MakeShared<FJsonValueObject>(NodeInfo));
 	}
 	Result->SetArrayField(TEXT("positioned_nodes"), PositionedNodesArray);
-	
+
 	return FECACommandResult::Success(Result);
 }
-
 //------------------------------------------------------------------------------
 // LEGACY: Old AutoLayoutBlueprintGraph implementation (kept for reference)
 // This code is no longer used but preserved for comparison

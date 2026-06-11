@@ -650,7 +650,7 @@ class FECACommand_AutoLayoutBlueprintGraph : public IECACommand
 {
 public:
 	virtual FString GetName() const override { return TEXT("auto_layout_blueprint_graph"); }
-	virtual FString GetDescription() const override { return TEXT("Automatically arrange nodes in a Blueprint graph for visual clarity. Organizes by execution flow with consistent spacing."); }
+	virtual FString GetDescription() const override { return TEXT("Layered left-to-right auto layout for Blueprint K2 graphs. Preserves existing callers and wraps comment boxes after layout."); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
 	
 	virtual TArray<FECACommandParam> GetParameters() const override
@@ -658,18 +658,23 @@ public:
 		return {
 			{ TEXT("blueprint_path"), TEXT("string"), TEXT("Path to the Blueprint asset"), true },
 			{ TEXT("graph_name"), TEXT("string"), TEXT("Name of the graph to layout"), false, TEXT("EventGraph") },
-			{ TEXT("strategy"), TEXT("string"), TEXT("Layout strategy: horizontal (default), vertical, tree, compact"), false, TEXT("horizontal") },
-			{ TEXT("spacing_x"), TEXT("number"), TEXT("Horizontal spacing between nodes (default: 400)"), false, TEXT("400") },
-			{ TEXT("spacing_y"), TEXT("number"), TEXT("Vertical spacing between nodes (default: 150)"), false, TEXT("150") },
-			{ TEXT("align_comments"), TEXT("boolean"), TEXT("Also reposition comment nodes to wrap their contents"), false, TEXT("true") },
-			{ TEXT("selected_only"), TEXT("boolean"), TEXT("Only layout selected nodes (false = entire graph)"), false, TEXT("false") },
-			{ TEXT("node_ids"), TEXT("array"), TEXT("Specific node IDs to layout (optional, overrides selected_only)"), false }
+			{ TEXT("layout_engine"), TEXT("string"), TEXT("Layout engine: layered (default). legacy_tree is accepted as a deprecated alias."), false, TEXT("layered") },
+			{ TEXT("start_x"), TEXT("number"), TEXT("Left edge for the first layout rank"), false, TEXT("0") },
+			{ TEXT("start_y"), TEXT("number"), TEXT("Top edge for the first layout rank"), false, TEXT("0") },
+			{ TEXT("padding_x"), TEXT("number"), TEXT("Horizontal padding between layout ranks"), false, TEXT("120") },
+			{ TEXT("padding_y"), TEXT("number"), TEXT("Vertical padding between nodes in a rank"), false, TEXT("40") },
+			{ TEXT("materialize_long_edges"), TEXT("boolean"), TEXT("Reserved for tagged ECABridge reroute knot generation"), false, TEXT("false") },
+			{ TEXT("align_comments"), TEXT("boolean"), TEXT("Reposition existing comment nodes to wrap their original members"), false, TEXT("true") },
+			{ TEXT("node_ids"), TEXT("array"), TEXT("Specific node IDs to layout (optional)"), false },
+			{ TEXT("strategy"), TEXT("string"), TEXT("Deprecated compatibility field; routes to layered"), false },
+			{ TEXT("spacing_x"), TEXT("number"), TEXT("Deprecated alias for padding_x"), false },
+			{ TEXT("spacing_y"), TEXT("number"), TEXT("Deprecated alias for padding_y"), false },
+			{ TEXT("selected_only"), TEXT("boolean"), TEXT("Deprecated compatibility field"), false, TEXT("false") }
 		};
 	}
 
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
-
 /**
  * Set the X/Y position of one or more existing nodes in a Blueprint graph.
  * Safer than poking NodePosX/NodePosY via Python reflection (which can crash UE
