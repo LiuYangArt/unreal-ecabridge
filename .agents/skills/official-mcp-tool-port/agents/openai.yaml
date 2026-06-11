@@ -1,0 +1,4 @@
+interface:
+  display_name: "Official MCP Tool Port"
+  short_description: "Port official Epic MCP tools into ECABridge"
+  default_prompt: "Use $official-mcp-tool-port to port an official Epic native MCP/toolset feature into ECABridge safely."
