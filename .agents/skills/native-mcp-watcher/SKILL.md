@@ -27,8 +27,9 @@ It creates or updates a partial+sparse checkout of `https://github.com/EpicGames
 4. Inspect the changed Epic files in the local UnrealEngine clone to understand behavior.
 5. Fill `artifacts/native-mcp-watcher/<run-id>/clean-room-spec-template.md` in your own words. Do not copy source snippets.
 6. Classify each change as `port`, `mirror-api`, or `ignore`.
-7. Implement useful native MCP behavior in ECABridge using public UE APIs, existing command/schema patterns, and UE 5.7 guards.
-8. Avoid native MCP tool-name overlap unless compatibility requires it. If overlap is intentional, document why and run `python scripts\smoke-test.py --include-native` when native MCP is available.
+7. When the task is to port official native MCP/toolset behavior into ECABridge, switch to `$official-mcp-tool-port` to build the surface map, probe public UE APIs across target engines, and structure the clean-room implementation.
+8. Implement useful native MCP behavior in ECABridge using public UE APIs, existing command/schema patterns, and UE 5.7 guards.
+9. Avoid native MCP tool-name overlap unless compatibility requires it. If overlap is intentional, document why and run `python scripts\smoke-test.py --include-native` when native MCP is available.
 
 ## Output
 - `report.json`: changed paths, commit subjects, candidate native tool names, ECABridge registered-name overlaps.

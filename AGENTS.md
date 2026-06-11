@@ -24,7 +24,8 @@
 - For read-side partial results, include `_meta` confidence using existing `MakeECADumpMeta()` patterns.
 ## Native MCP Compatibility
 - Before adding a new MCP feature, check whether Epic's native `ModelContextProtocol` already has the capability or a public API shape to mirror.
-- Use the project-local `skills/native-mcp-watcher` workflow. Run `python skills\native-mcp-watcher\scripts\setup_native_mcp_checkout.py --target F:\CodeProjects\UnrealEngine` if the sparse native MCP checkout is missing, then `python tools\native_mcp_watcher.py --ue-repo <UnrealEngineClone> --base origin/release --target origin/ue5-main` to inventory official source changes and create a clean-room port spec.
+- Use the project-local `.agents/skills/native-mcp-watcher` workflow. Run `python .agents\skills\native-mcp-watcher\scripts\setup_native_mcp_checkout.py --target F:\CodeProjects\UnrealEngine` if the sparse native MCP checkout is missing, then `python tools\native_mcp_watcher.py --ue-repo <UnrealEngineClone> --base origin/release --target origin/ue5-main` to inventory official source changes and create a clean-room port spec.
+- When porting official native MCP/toolset behavior into ECABridge, use `$official-mcp-tool-port` after watcher inventory to build the surface map, probe public UE APIs, and plan clean-room implementation.
 - Preferred order: reuse public UE APIs, mirror native behavior from a plain-English spec, then add ECABridge-only tooling for gaps.
 - Never copy Epic source. Keep clean-room notes in docs or issue context when porting native behavior.
 - New tool names must be snake_case, unique in ECABridge, and should avoid native MCP tool-name overlap when practical.
