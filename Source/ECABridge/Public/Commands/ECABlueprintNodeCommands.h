@@ -13,7 +13,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_event_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add an event node (BeginPlay, Tick, etc.) to a Blueprint's event graph"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -36,7 +36,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_input_action_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add an input action event node to a Blueprint"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -59,7 +59,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_function_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add a function call node to a Blueprint graph"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -90,7 +90,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_macro_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add a macro node to a Blueprint. Common macros: ForLoop, ForLoopWithBreak, WhileLoop, ForEachLoop, Gate, MultiGate, DoOnce, DoN, FlipFlop, Sequence, IsValid. Example: {\"macro_name\":\"ForLoop\"}"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -117,7 +117,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_cast_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add a Cast To node. For native classes use name like Character, Actor, Pawn. For Blueprints use full path like /Game/BP_Enemy. Example: {\"target_class\":\"Character\"}"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -142,7 +142,7 @@ public:
 	virtual FString GetName() const override { return TEXT("connect_blueprint_nodes"); }
 	virtual FString GetDescription() const override { return TEXT("Connect two nodes in a Blueprint graph by their pins"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -169,7 +169,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_self_reference"); }
 	virtual FString GetDescription() const override { return TEXT("Add a 'Get Self' reference node to a Blueprint graph"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -192,7 +192,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_component_reference"); }
 	virtual FString GetDescription() const override { return TEXT("Add a component reference (getter) node to a Blueprint graph"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -217,7 +217,7 @@ public:
 	virtual FString GetDescription() const override { return TEXT("Find nodes in a Blueprint graph by type or name"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
 	virtual bool IsMutating() const override { return false; }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -227,7 +227,7 @@ public:
 			{ TEXT("node_title"), TEXT("string"), TEXT("Filter by node title (partial match)"), false }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -240,7 +240,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_variable_get"); }
 	virtual FString GetDescription() const override { return TEXT("Add a variable getter node to a Blueprint graph"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -264,7 +264,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_variable_set"); }
 	virtual FString GetDescription() const override { return TEXT("Add a variable setter node to a Blueprint graph"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -306,7 +306,7 @@ public:
 	virtual FString GetName() const override { return TEXT("batch_edit_blueprint_nodes"); }
 	virtual FString GetDescription() const override { return TEXT("Create multiple nodes and wire them together atomically. Node types: event, custom_event, function, variable_get, variable_set, self, component, input_action, cast, macro. Cast example: {\"type\":\"cast\", \"target_class\":\"Character\"}. Macro example: {\"type\":\"macro\", \"macro_name\":\"ForLoop\"}"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -316,7 +316,7 @@ public:
 			{ TEXT("connections"), TEXT("array"), TEXT("Array of connection definitions: {source_node, source_pin, target_node, target_pin}"), false }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -331,7 +331,7 @@ public:
 	virtual FString GetDescription() const override { return TEXT("Get detailed pin information for a node by its GUID. Use this to discover pin names for connections."); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
 	virtual bool IsMutating() const override { return false; }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -340,7 +340,7 @@ public:
 			{ TEXT("graph_name"), TEXT("string"), TEXT("Name of the graph"), false, TEXT("EventGraph") }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -354,7 +354,7 @@ public:
 	virtual FString GetName() const override { return TEXT("delete_blueprint_node"); }
 	virtual FString GetDescription() const override { return TEXT("Delete a node from a Blueprint graph by its GUID"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -377,7 +377,7 @@ public:
 	virtual FString GetName() const override { return TEXT("cleanup_orphan_nodes"); }
 	virtual FString GetDescription() const override { return TEXT("Find and optionally delete orphan nodes (nodes with no execution flow connections) from a Blueprint graph"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -387,7 +387,7 @@ public:
 			{ TEXT("node_class_filter"), TEXT("string"), TEXT("Only consider nodes of this class (e.g., K2Node_CallFunction)"), false }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -400,7 +400,7 @@ public:
 	virtual FString GetName() const override { return TEXT("disconnect_blueprint_node"); }
 	virtual FString GetDescription() const override { return TEXT("Disconnect all pins or specific pins on a Blueprint node"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -425,7 +425,7 @@ public:
 	virtual FString GetName() const override { return TEXT("set_blueprint_pin_value"); }
 	virtual FString GetDescription() const override { return TEXT("Set the default value of an input pin on a Blueprint node"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -442,6 +442,32 @@ public:
 };
 
 /**
+ * Set the developer tooltip of a pin on a Blueprint node
+ */
+class FECACommand_SetBlueprintPinTooltip : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_blueprint_pin_tooltip"); }
+	virtual FString GetDescription() const override { return TEXT("Set the developer tooltip/description of a pin on a Blueprint node"); }
+	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("blueprint_path"), TEXT("string"), TEXT("Path to the Blueprint asset"), true },
+			{ TEXT("node_id"), TEXT("string"), TEXT("GUID of the node (or use node_name)"), false },
+			{ TEXT("node_name"), TEXT("string"), TEXT("Friendly name of the node (registered via name_blueprint_node or the `name` param on add_* commands)"), false },
+			{ TEXT("pin_name"), TEXT("string"), TEXT("Name of the pin"), true },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the pin"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false },
+			{ TEXT("graph_name"), TEXT("string"), TEXT("Name of the graph"), false, TEXT("EventGraph") }
+		};
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
  * Set the default value of a Blueprint variable
  */
 class FECACommand_SetBlueprintVariableDefault : public IECACommand
@@ -450,7 +476,7 @@ public:
 	virtual FString GetName() const override { return TEXT("set_blueprint_variable_default"); }
 	virtual FString GetDescription() const override { return TEXT("Set the default value of a Blueprint variable"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -459,7 +485,7 @@ public:
 			{ TEXT("value"), TEXT("any"), TEXT("Default value to set (type must match variable type)"), true }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -473,7 +499,7 @@ public:
 	virtual FString GetDescription() const override { return TEXT("Get the default value of a Blueprint variable"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
 	virtual bool IsMutating() const override { return false; }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -481,7 +507,7 @@ public:
 			{ TEXT("variable_name"), TEXT("string"), TEXT("Name of the variable"), true }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -494,7 +520,7 @@ public:
 	virtual FString GetName() const override { return TEXT("break_pin_connection"); }
 	virtual FString GetDescription() const override { return TEXT("Break a connection between two specific pins"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -521,7 +547,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_component_event_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add an event node bound to a specific component (e.g., OnComponentBeginOverlap, OnComponentEndOverlap, OnComponentHit)"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -545,7 +571,7 @@ public:
 	virtual FString GetName() const override { return TEXT("delete_blueprint_component"); }
 	virtual FString GetDescription() const override { return TEXT("Delete a component from a Blueprint by name"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -553,7 +579,7 @@ public:
 			{ TEXT("component_name"), TEXT("string"), TEXT("Name of the component to delete"), true }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -576,7 +602,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_flow_control_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add a flow control node: branch (if/else), select, switch_int, switch_string, switch_name, switch_enum. Example: {\"node_type\":\"branch\"}"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -652,7 +678,7 @@ public:
 	virtual FString GetName() const override { return TEXT("auto_layout_blueprint_graph"); }
 	virtual FString GetDescription() const override { return TEXT("Layered left-to-right auto layout for Blueprint K2 graphs. Preserves existing callers and wraps comment boxes after layout."); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {

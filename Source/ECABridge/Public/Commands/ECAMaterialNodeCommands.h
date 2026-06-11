@@ -13,7 +13,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_material_node"); }
 	virtual FString GetDescription() const override { return TEXT("Add a material expression node to a material graph"); }
 	virtual FString GetCategory() const override { return TEXT("Material Node"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -21,10 +21,12 @@ public:
 			{ TEXT("node_type"), TEXT("string"), TEXT("Type of node: TextureSample, TextureSampleParameter2D, Constant, Constant3Vector, Constant4Vector, VectorParameter, ScalarParameter, Multiply, Add, Lerp, ComponentMask, Append, etc."), true },
 			{ TEXT("node_position"), TEXT("object"), TEXT("Node position in graph {x, y}"), false },
 			{ TEXT("parameter_name"), TEXT("string"), TEXT("Parameter name (for parameter types)"), false },
-			{ TEXT("default_value"), TEXT("any"), TEXT("Default value (scalar, vector {r,g,b,a}, or texture path)"), false }
+			{ TEXT("default_value"), TEXT("any"), TEXT("Default value (scalar, vector {r,g,b,a}, or texture path)"), false },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the material node/parameter"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -48,7 +50,7 @@ public:
 			{ TEXT("target_input"), TEXT("string"), TEXT("Input name (BaseColor, Metallic, Roughness, Normal, EmissiveColor, etc. for material, or input index/name for nodes)"), true }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -163,6 +165,30 @@ public:
 };
 
 /**
+ * Set a material node or parameter tooltip/description.
+ */
+class FECACommand_SetMaterialNodeDescription : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_material_node_description"); }
+	virtual FString GetDescription() const override { return TEXT("Set a material expression tooltip/description by node_id or parameter_name."); }
+	virtual FString GetCategory() const override { return TEXT("Material Node"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("material_path"), TEXT("string"), TEXT("Path to the Material asset"), true },
+			{ TEXT("node_id"), TEXT("string"), TEXT("GUID of the node"), false },
+			{ TEXT("parameter_name"), TEXT("string"), TEXT("Material parameter name"), false },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the material node/parameter"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false }
+		};
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
  * Batch create nodes and connections in a material
  */
 class FECACommand_BatchEditMaterialNodes : public IECACommand
@@ -176,7 +202,7 @@ public:
 	{
 		return {
 			{ TEXT("material_path"), TEXT("string"), TEXT("Path to the Material asset"), true },
-			{ TEXT("nodes"), TEXT("array"), TEXT("Array of node definitions. Each node must have 'temp_id' and 'node_type'. Optional: parameter_name, default_value, node_position {x, y}"), true },
+			{ TEXT("nodes"), TEXT("array"), TEXT("Array of node definitions. Each node must have 'temp_id' and 'node_type'. Optional: parameter_name, default_value, tooltip/description, node_position {x, y}"), true },
 			{ TEXT("connections"), TEXT("array"), TEXT("Array of connection definitions: {source_node, source_output, target_node, target_input}. Use temp_id or existing node GUIDs. target_node can be 'material' to connect to material inputs."), false }
 		};
 	}

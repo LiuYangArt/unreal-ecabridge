@@ -10,6 +10,7 @@
 #include "Dom/JsonValue.h"
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraph.h"
+#include "EdGraphSchema_K2.h"
 
 // PCG
 #include "PCGGraph.h"
@@ -50,6 +51,7 @@
 REGISTER_ECA_COMMAND(FECACommand_DumpPCGGraph)
 #if WITH_ECA_CONTROL_RIG
 REGISTER_ECA_COMMAND(FECACommand_DumpControlRig)
+REGISTER_ECA_COMMAND(FECACommand_SetControlRigVariableTooltip)
 REGISTER_ECA_COMMAND(FECACommand_AddControlRigNull)
 REGISTER_ECA_COMMAND(FECACommand_AddControlRigControl)
 REGISTER_ECA_COMMAND(FECACommand_SetControlRigElementTransform)
@@ -266,6 +268,14 @@ FECACommandResult FECACommand_DumpPCGGraph::Execute(const TSharedPtr<FJsonObject
 					TypeName = TEXT("Unknown");
 				}
 				ParamObj->SetStringField(TEXT("type"), TypeName);
+#if WITH_EDITOR
+				const FString Tooltip = Desc.GetMetaData(FName(TEXT("ToolTip")));
+				if (!Tooltip.IsEmpty())
+				{
+					ParamObj->SetStringField(TEXT("tooltip"), Tooltip);
+					ParamObj->SetStringField(TEXT("description"), Tooltip);
+				}
+#endif
 
 				ParametersArray.Add(MakeShared<FJsonValueObject>(ParamObj));
 			}
@@ -1044,6 +1054,91 @@ FECACommandResult FECACommand_DumpControlRig::Execute(const TSharedPtr<FJsonObje
 	Result->SetArrayField(TEXT("graphs"), GraphsArray);
 	Result->SetNumberField(TEXT("graph_count"), GraphsArray.Num());
 
+	TArray<TSharedPtr<FJsonValue>> VarsArray;
+	for (const FBPVariableDescription& Var : RigBlueprint->NewVariables)
+	{
+		TSharedPtr<FJsonObject> VarObj = MakeShared<FJsonObject>();
+		VarObj->SetStringField(TEXT("name"), Var.VarName.ToString());
+		VarObj->SetStringField(TEXT("type"), Var.VarType.PinCategory.ToString());
+		if (Var.VarType.PinSubCategoryObject.IsValid())
+		{
+			VarObj->SetStringField(TEXT("sub_type"), Var.VarType.PinSubCategoryObject->GetName());
+		}
+		if (!Var.DefaultValue.IsEmpty())
+		{
+			VarObj->SetStringField(TEXT("default_value"), Var.DefaultValue);
+		}
+		FString Tooltip;
+		if (FBlueprintEditorUtils::GetBlueprintVariableMetaData(RigBlueprint, Var.VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip) && !Tooltip.IsEmpty())
+		{
+			VarObj->SetStringField(TEXT("tooltip"), Tooltip);
+			VarObj->SetStringField(TEXT("description"), Tooltip);
+		}
+		VarsArray.Add(MakeShared<FJsonValueObject>(VarObj));
+	}
+	Result->SetArrayField(TEXT("variables"), VarsArray);
+	Result->SetNumberField(TEXT("variable_count"), VarsArray.Num());
+
+	return FECACommandResult::Success(Result);
+}
+
+FECACommandResult FECACommand_SetControlRigVariableTooltip::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	using namespace ECAControlRigHelpers;
+
+	FString RigPath;
+	if (!GetStringParam(Params, TEXT("rig_path"), RigPath, true))
+	{
+		return FECACommandResult::Error(TEXT("rig_path is required"));
+	}
+
+	FString VariableName;
+	if (!GetStringParam(Params, TEXT("variable_name"), VariableName, true))
+	{
+		return FECACommandResult::Error(TEXT("variable_name is required"));
+	}
+
+	FString Tooltip;
+	GetStringParam(Params, TEXT("tooltip"), Tooltip, false);
+	if (Tooltip.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Tooltip, false);
+	}
+	if (Tooltip.IsEmpty())
+	{
+		return FECACommandResult::Error(TEXT("tooltip or description is required"));
+	}
+
+	FString Error;
+	UControlRigBlueprint* RigBlueprint = LoadRigBlueprint(RigPath, Error);
+	if (!RigBlueprint)
+	{
+		return FECACommandResult::Error(Error);
+	}
+
+	const FName VarName(*VariableName);
+	bool bFound = false;
+	for (const FBPVariableDescription& Var : RigBlueprint->NewVariables)
+	{
+		if (Var.VarName == VarName)
+		{
+			bFound = true;
+			break;
+		}
+	}
+	if (!bFound)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("ControlRig variable not found: %s"), *VariableName));
+	}
+
+	FBlueprintEditorUtils::SetBlueprintVariableMetaData(RigBlueprint, VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip);
+	MarkRigModified(RigBlueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("rig_path"), RigPath);
+	Result->SetStringField(TEXT("variable_name"), VariableName);
+	Result->SetStringField(TEXT("tooltip"), Tooltip);
+	Result->SetStringField(TEXT("description"), Tooltip);
 	return FECACommandResult::Success(Result);
 }
 

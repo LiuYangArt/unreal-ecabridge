@@ -37,6 +37,7 @@ REGISTER_ECA_COMMAND(FECACommand_CreateBlueprint)
 REGISTER_ECA_COMMAND(FECACommand_AddBlueprintComponent)
 REGISTER_ECA_COMMAND(FECACommand_CompileBlueprint)
 REGISTER_ECA_COMMAND(FECACommand_AddBlueprintVariable)
+REGISTER_ECA_COMMAND(FECACommand_SetBlueprintVariableTooltip)
 REGISTER_ECA_COMMAND(FECACommand_SpawnBlueprintActor)
 REGISTER_ECA_COMMAND(FECACommand_GetBlueprintInfo)
 REGISTER_ECA_COMMAND(FECACommand_ListBlueprints)
@@ -651,6 +652,18 @@ FECACommandResult FECACommand_AddBlueprintVariable::Execute(const TSharedPtr<FJs
 	FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(Blueprint, FName(*VariableName), !bInstanceEditable);
 	FBlueprintEditorUtils::SetBlueprintPropertyReadOnlyFlag(Blueprint, FName(*VariableName), bBlueprintReadOnly);
 	
+	FString Tooltip;
+	GetStringParam(Params, TEXT("tooltip"), Tooltip, false);
+	if (Tooltip.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Tooltip, false);
+	}
+	if (!Tooltip.IsEmpty())
+	{
+		FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, FName(*VariableName), nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip);
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	}
+
 	// Handle default value if provided
 	FString DefaultValue;
 	bool bDefaultValueSet = false;
@@ -684,6 +697,71 @@ FECACommandResult FECACommand_AddBlueprintVariable::Execute(const TSharedPtr<FJs
 	{
 		Result->SetStringField(TEXT("default_value"), DefaultValue);
 	}
+	if (!Tooltip.IsEmpty())
+	{
+		Result->SetStringField(TEXT("tooltip"), Tooltip);
+		Result->SetStringField(TEXT("description"), Tooltip);
+	}
+	return FECACommandResult::Success(Result);
+}
+
+//------------------------------------------------------------------------------
+// SetBlueprintVariableTooltip
+//------------------------------------------------------------------------------
+
+FECACommandResult FECACommand_SetBlueprintVariableTooltip::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintPath;
+	if (!GetStringParam(Params, TEXT("blueprint_path"), BlueprintPath))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: blueprint_path"));
+	}
+
+	FString VariableName;
+	if (!GetStringParam(Params, TEXT("variable_name"), VariableName))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: variable_name"));
+	}
+
+	FString Tooltip;
+	GetStringParam(Params, TEXT("tooltip"), Tooltip, false);
+	if (Tooltip.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Tooltip, false);
+	}
+	if (Tooltip.IsEmpty())
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: tooltip or description"));
+	}
+
+	UBlueprint* Blueprint = LoadBlueprintByPath(BlueprintPath);
+	if (!Blueprint)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintPath));
+	}
+
+	const FName VarName(*VariableName);
+	bool bFound = false;
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == VarName)
+		{
+			bFound = true;
+			break;
+		}
+	}
+	if (!bFound)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Variable not found: %s"), *VariableName));
+	}
+
+	FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("variable_name"), VariableName);
+	Result->SetStringField(TEXT("tooltip"), Tooltip);
+	Result->SetStringField(TEXT("description"), Tooltip);
 	return FECACommandResult::Success(Result);
 }
 
@@ -817,6 +895,12 @@ FECACommandResult FECACommand_GetBlueprintInfo::Execute(const TSharedPtr<FJsonOb
 		TSharedPtr<FJsonObject> VarObj = MakeShared<FJsonObject>();
 		VarObj->SetStringField(TEXT("name"), Var.VarName.ToString());
 		VarObj->SetStringField(TEXT("type"), Var.VarType.PinCategory.ToString());
+		FString Tooltip;
+		if (FBlueprintEditorUtils::GetBlueprintVariableMetaData(Blueprint, Var.VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip) && !Tooltip.IsEmpty())
+		{
+			VarObj->SetStringField(TEXT("tooltip"), Tooltip);
+			VarObj->SetStringField(TEXT("description"), Tooltip);
+		}
 		VariablesArray.Add(MakeShared<FJsonValueObject>(VarObj));
 	}
 	Result->SetArrayField(TEXT("variables"), VariablesArray);

@@ -6046,6 +6046,41 @@ FECACommandResult FECACommand_LispToBlueprint::Execute(const TSharedPtr<FJsonObj
 						return PinType;
 					};
 					
+					auto GetParamTooltip = [](const FLispNodePtr& ParamDef) -> FString
+					{
+						if (!ParamDef.IsValid() || !ParamDef->IsList() || ParamDef->Num() < 3)
+						{
+							return TEXT("");
+						}
+
+						for (int32 Index = 2; Index < ParamDef->Num(); ++Index)
+						{
+							FLispNodePtr Node = ParamDef->Get(Index);
+							if (!Node.IsValid())
+							{
+								continue;
+							}
+
+							if ((Node->IsString() || Node->IsSymbol()) && !Node->StringValue.IsEmpty())
+							{
+								return Node->StringValue;
+							}
+
+							if (Node->IsKeyword()
+								&& (Node->StringValue.Equals(TEXT(":tooltip"), ESearchCase::IgnoreCase)
+									|| Node->StringValue.Equals(TEXT(":description"), ESearchCase::IgnoreCase))
+								&& Index + 1 < ParamDef->Num())
+							{
+								FLispNodePtr ValueNode = ParamDef->Get(Index + 1);
+								if (ValueNode.IsValid() && (ValueNode->IsString() || ValueNode->IsSymbol()))
+								{
+									return ValueNode->StringValue;
+								}
+							}
+						}
+						return TEXT("");
+					};
+
 					// Add input parameters
 					if (InputsNode.IsValid() && InputsNode->IsList())
 					{
@@ -6058,7 +6093,12 @@ FECACommandResult FECACommand_LispToBlueprint::Execute(const TSharedPtr<FJsonObj
 								FString ParamType = ParamDef->Get(1)->StringValue;
 								
 								FEdGraphPinType PinType = LispTypeToPinType(ParamType);
-								EntryNode->CreateUserDefinedPin(FName(*ParamName), PinType, EGPD_Output);
+								UEdGraphPin* CreatedPin = EntryNode->CreateUserDefinedPin(FName(*ParamName), PinType, EGPD_Output);
+								const FString Tooltip = GetParamTooltip(ParamDef);
+								if (CreatedPin && !Tooltip.IsEmpty())
+								{
+									CreatedPin->PinToolTip = Tooltip;
+								}
 							}
 						}
 					}
@@ -6075,7 +6115,12 @@ FECACommandResult FECACommand_LispToBlueprint::Execute(const TSharedPtr<FJsonObj
 								FString ParamType = ParamDef->Get(1)->StringValue;
 								
 								FEdGraphPinType PinType = LispTypeToPinType(ParamType);
-								ResultNode->CreateUserDefinedPin(FName(*ParamName), PinType, EGPD_Input);
+								UEdGraphPin* CreatedPin = ResultNode->CreateUserDefinedPin(FName(*ParamName), PinType, EGPD_Input);
+								const FString Tooltip = GetParamTooltip(ParamDef);
+								if (CreatedPin && !Tooltip.IsEmpty())
+								{
+									CreatedPin->PinToolTip = Tooltip;
+								}
 							}
 						}
 					}

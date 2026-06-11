@@ -68,6 +68,29 @@ public:
 };
 
 /**
+ * Set a Control Rig Blueprint variable tooltip.
+ */
+class FECACommand_SetControlRigVariableTooltip : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_control_rig_variable_tooltip"); }
+	virtual FString GetDescription() const override { return TEXT("Set a Control Rig Blueprint variable tooltip. Accepts tooltip or description. Requires ControlRig plugin."); }
+	virtual FString GetCategory() const override { return TEXT("ControlRig"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("rig_path"), TEXT("string"), TEXT("Content path to the Control Rig blueprint"), true },
+			{ TEXT("variable_name"), TEXT("string"), TEXT("Name of the Control Rig Blueprint variable"), true },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the variable"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false }
+		};
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
  * Add a null to a Control Rig hierarchy.
  */
 class FECACommand_AddControlRigNull : public IECACommand

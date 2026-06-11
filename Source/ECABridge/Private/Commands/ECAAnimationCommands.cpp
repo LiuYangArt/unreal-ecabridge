@@ -25,6 +25,7 @@
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraph/EdGraphSchema.h"
+#include "EdGraphSchema_K2.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "ScopedTransaction.h"
 #include "Animation/AnimationAsset.h"
@@ -185,6 +186,8 @@ FECACommandResult FECACommand_PlayAnimation::Execute(const TSharedPtr<FJsonObjec
 
 	return FECACommandResult::Success(Result);
 }
+
+
 
 namespace AnimBPStateMachineHelpers
 {
@@ -1592,6 +1595,7 @@ FECACommandResult FECACommand_SetSkeletalMesh::Execute(const TSharedPtr<FJsonObj
 // ============================================================================
 
 REGISTER_ECA_COMMAND(FECACommand_DumpAnimationBlueprint)
+REGISTER_ECA_COMMAND(FECACommand_SetAnimBPVariableTooltip)
 
 FECACommandResult FECACommand_DumpAnimationBlueprint::Execute(const TSharedPtr<FJsonObject>& Params)
 {
@@ -1642,6 +1646,12 @@ FECACommandResult FECACommand_DumpAnimationBlueprint::Execute(const TSharedPtr<F
 		if (!Var.DefaultValue.IsEmpty())
 		{
 			VarObj->SetStringField(TEXT("default_value"), Var.DefaultValue);
+		}
+		FString Tooltip;
+		if (FBlueprintEditorUtils::GetBlueprintVariableMetaData(AnimBP, Var.VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip) && !Tooltip.IsEmpty())
+		{
+			VarObj->SetStringField(TEXT("tooltip"), Tooltip);
+			VarObj->SetStringField(TEXT("description"), Tooltip);
 		}
 		VarsArray.Add(MakeShared<FJsonValueObject>(VarObj));
 	}
@@ -1849,5 +1859,61 @@ FECACommandResult FECACommand_DumpAnimationBlueprint::Execute(const TSharedPtr<F
 	Result->SetObjectField(TEXT("_meta"),
 		MakeECADumpMeta(TEXT("AnimBP graph traversal (function + ubergraph)"), Coverage, Confidence, Notes));
 
+	return FECACommandResult::Success(Result);
+}
+FECACommandResult FECACommand_SetAnimBPVariableTooltip::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString AnimBPPath;
+	if (!GetStringParam(Params, TEXT("anim_bp_path"), AnimBPPath))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: anim_bp_path"));
+	}
+
+	FString VariableName;
+	if (!GetStringParam(Params, TEXT("variable_name"), VariableName))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: variable_name"));
+	}
+
+	FString Tooltip;
+	GetStringParam(Params, TEXT("tooltip"), Tooltip, false);
+	if (Tooltip.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Tooltip, false);
+	}
+	if (Tooltip.IsEmpty())
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: tooltip or description"));
+	}
+
+	UAnimBlueprint* AnimBP = LoadObject<UAnimBlueprint>(nullptr, *AnimBPPath);
+	if (!AnimBP)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Failed to load Animation Blueprint: %s"), *AnimBPPath));
+	}
+
+	const FName VarName(*VariableName);
+	bool bFound = false;
+	for (const FBPVariableDescription& Var : AnimBP->NewVariables)
+	{
+		if (Var.VarName == VarName)
+		{
+			bFound = true;
+			break;
+		}
+	}
+	if (!bFound)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Variable not found: %s"), *VariableName));
+	}
+
+	FBlueprintEditorUtils::SetBlueprintVariableMetaData(AnimBP, VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBP);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("anim_bp_path"), AnimBPPath);
+	Result->SetStringField(TEXT("variable_name"), VariableName);
+	Result->SetStringField(TEXT("tooltip"), Tooltip);
+	Result->SetStringField(TEXT("description"), Tooltip);
 	return FECACommandResult::Success(Result);
 }

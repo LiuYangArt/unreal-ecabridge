@@ -75,6 +75,7 @@ REGISTER_ECA_COMMAND(FECACommand_DeleteBlueprintNode)
 REGISTER_ECA_COMMAND(FECACommand_CleanupOrphanNodes)
 REGISTER_ECA_COMMAND(FECACommand_DisconnectBlueprintNode)
 REGISTER_ECA_COMMAND(FECACommand_SetBlueprintPinValue)
+REGISTER_ECA_COMMAND(FECACommand_SetBlueprintPinTooltip)
 REGISTER_ECA_COMMAND(FECACommand_SetBlueprintVariableDefault)
 REGISTER_ECA_COMMAND(FECACommand_GetBlueprintVariableDefault)
 REGISTER_ECA_COMMAND(FECACommand_BreakPinConnection)
@@ -277,6 +278,11 @@ static TSharedPtr<FJsonObject> PinToJson(UEdGraphPin* Pin)
 	
 	PinJson->SetBoolField(TEXT("is_connected"), Pin->LinkedTo.Num() > 0);
 	PinJson->SetBoolField(TEXT("is_hidden"), Pin->bHidden);
+	if (!Pin->PinToolTip.IsEmpty())
+	{
+		PinJson->SetStringField(TEXT("tooltip"), Pin->PinToolTip);
+		PinJson->SetStringField(TEXT("description"), Pin->PinToolTip);
+	}
 	
 	// Include default value if set
 	if (!Pin->DefaultValue.IsEmpty())
@@ -2960,6 +2966,90 @@ FECACommandResult FECACommand_SetBlueprintPinValue::Execute(const TSharedPtr<FJs
 }
 
 //------------------------------------------------------------------------------
+// SetBlueprintPinTooltip - Set the tooltip of a pin on a node
+//------------------------------------------------------------------------------
+
+FECACommandResult FECACommand_SetBlueprintPinTooltip::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString BlueprintPath;
+	if (!GetStringParam(Params, TEXT("blueprint_path"), BlueprintPath))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: blueprint_path"));
+	}
+
+	FString PinName;
+	if (!GetStringParam(Params, TEXT("pin_name"), PinName))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: pin_name"));
+	}
+
+	FString Tooltip;
+	GetStringParam(Params, TEXT("tooltip"), Tooltip, false);
+	if (Tooltip.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Tooltip, false);
+	}
+	if (Tooltip.IsEmpty())
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: tooltip or description"));
+	}
+
+	FString GraphName = TEXT("EventGraph");
+	GetStringParam(Params, TEXT("graph_name"), GraphName, false);
+
+	FString IgnoredBP, IgnoredGraph;
+	FGuid NodeGuid;
+	FString ErrMsg;
+	if (!ResolveNodeRef(Params, TEXT("node_id"), TEXT("node_name"),
+		IgnoredBP, IgnoredGraph, NodeGuid, ErrMsg))
+	{
+		return FECACommandResult::ValidationError(this, ErrMsg);
+	}
+
+	const FString NodeId = NodeGuid.ToString();
+
+	UBlueprint* Blueprint = LoadBlueprintByPath(BlueprintPath);
+	if (!Blueprint)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintPath));
+	}
+
+	UEdGraph* Graph = FindGraphByName(Blueprint, GraphName);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Graph not found: %s"), *GraphName));
+	}
+
+	UEdGraphNode* Node = FindNodeByGuid(Graph, NodeGuid);
+	if (!Node)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Node not found: %s"), *NodeId));
+	}
+
+	UEdGraphPin* Pin = FindPinByFriendlyName(Node, PinName, EGPD_Input);
+	if (!Pin)
+	{
+		Pin = FindPinByFriendlyName(Node, PinName, EGPD_Output);
+	}
+	if (!Pin)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Pin not found: %s"), *PinName));
+	}
+
+	const FString OldTooltip = Pin->PinToolTip;
+	Node->Modify();
+	Pin->PinToolTip = Tooltip;
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("node_id"), NodeId);
+	Result->SetStringField(TEXT("pin_name"), Pin->PinName.ToString());
+	Result->SetStringField(TEXT("old_tooltip"), OldTooltip);
+	Result->SetStringField(TEXT("tooltip"), Tooltip);
+	Result->SetStringField(TEXT("description"), Tooltip);
+	return FECACommandResult::Success(Result);
+}
+//------------------------------------------------------------------------------
 // SetBlueprintVariableDefault - Set the default value of a Blueprint variable
 //------------------------------------------------------------------------------
 
@@ -4598,6 +4688,12 @@ FECACommandResult FECACommand_DumpBlueprintGraph::Execute(const TSharedPtr<FJson
 		if (!Var.DefaultValue.IsEmpty())
 		{
 			VarObj->SetStringField(TEXT("default_value"), Var.DefaultValue);
+		}
+		FString Tooltip;
+		if (FBlueprintEditorUtils::GetBlueprintVariableMetaData(Blueprint, Var.VarName, nullptr, FBlueprintMetadata::MD_Tooltip, Tooltip) && !Tooltip.IsEmpty())
+		{
+			VarObj->SetStringField(TEXT("tooltip"), Tooltip);
+			VarObj->SetStringField(TEXT("description"), Tooltip);
 		}
 
 		// Replication

@@ -29,12 +29,15 @@ REGISTER_ECA_COMMAND(FECACommand_ConnectPCGNodes)
 REGISTER_ECA_COMMAND(FECACommand_AutoLayoutPCGGraph)
 REGISTER_ECA_COMMAND(FECACommand_SetPCGNodeProperty)
 REGISTER_ECA_COMMAND(FECACommand_AddPCGGraphParameter)
+REGISTER_ECA_COMMAND(FECACommand_SetPCGGraphParameterTooltip)
 REGISTER_ECA_COMMAND(FECACommand_RenamePCGGraphParameter)
 REGISTER_ECA_COMMAND(FECACommand_RemovePCGGraphParameter)
 REGISTER_ECA_COMMAND(FECACommand_SetPCGGraphParameterDefault)
 
 namespace ECAPcgHelpers
 {
+	static const FName TooltipMetaKey(TEXT("ToolTip"));
+
 	// Find a settings subclass by short name (with or without leading 'U', case-insensitive).
 	static UClass* FindPCGSettingsClass(const FString& Name)
 	{
@@ -622,6 +625,14 @@ namespace ECAPcgHelpers
 			{
 				ParamObj->SetStringField(TEXT("type_object"), Desc.ValueTypeObject->GetPathName());
 			}
+#if WITH_EDITOR
+			const FString Tooltip = Desc.GetMetaData(TooltipMetaKey);
+			if (!Tooltip.IsEmpty())
+			{
+				ParamObj->SetStringField(TEXT("tooltip"), Tooltip);
+				ParamObj->SetStringField(TEXT("description"), Tooltip);
+			}
+#endif
 			ParametersArray.Add(MakeShared<FJsonValueObject>(ParamObj));
 		}
 		return ParametersArray;
@@ -1259,6 +1270,12 @@ FECACommandResult FECACommand_AddPCGGraphParameter::Execute(const TSharedPtr<FJs
 	GetStringParam(Params, TEXT("container"), ContainerName, false);
 	GetStringParam(Params, TEXT("object_class"), ObjectClassName, false);
 	GetBoolParam(Params, TEXT("overwrite"), bOverwrite, false);
+	FString Tooltip;
+	GetStringParam(Params, TEXT("tooltip"), Tooltip, false);
+	if (Tooltip.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Tooltip, false);
+	}
 	const TSharedPtr<FJsonValue> ValueJson = Params.IsValid() ? Params->TryGetField(TEXT("value")) : nullptr;
 
 	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
@@ -1286,15 +1303,18 @@ FECACommandResult FECACommand_AddPCGGraphParameter::Execute(const TSharedPtr<FJs
 	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
 	{
 		const FName ParamName(*Name);
-		EPropertyBagAlterationResult AddResult = EPropertyBagAlterationResult::InternalError;
-		if (ContainerType == EPropertyBagContainerType::Array)
+		FPropertyBagPropertyDesc Desc = ContainerType == EPropertyBagContainerType::Array
+			? FPropertyBagPropertyDesc(ParamName, ContainerType, ValueType, ValueTypeObject)
+			: FPropertyBagPropertyDesc(ParamName, ValueType, ValueTypeObject);
+#if WITH_EDITOR
+		if (!Tooltip.IsEmpty())
 		{
-			AddResult = Bag.AddContainerProperty(ParamName, ContainerType, ValueType, ValueTypeObject, bOverwrite);
+			Desc.SetMetaData(ECAPcgHelpers::TooltipMetaKey, Tooltip);
 		}
-		else
-		{
-			AddResult = Bag.AddProperty(ParamName, ValueType, ValueTypeObject, bOverwrite);
-		}
+#endif
+		TArray<FPropertyBagPropertyDesc> Descs;
+		Descs.Add(Desc);
+		const EPropertyBagAlterationResult AddResult = Bag.AddProperties(Descs, bOverwrite);
 
 		if (!ECAPcgHelpers::IsSuccess(AddResult))
 		{
@@ -1320,6 +1340,78 @@ FECACommandResult FECACommand_AddPCGGraphParameter::Execute(const TSharedPtr<FJs
 	}
 
 	return FECACommandResult::Success(ECAPcgHelpers::BuildGraphParameterResult(Graph, GraphPath, Name));
+}
+
+//==============================================================================
+// set_pcg_graph_parameter_tooltip
+//==============================================================================
+FECACommandResult FECACommand_SetPCGGraphParameterTooltip::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath, Name, Tooltip;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+	if (!GetStringParam(Params, TEXT("name"), Name, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("name is required"));
+	}
+	GetStringParam(Params, TEXT("tooltip"), Tooltip, false);
+	if (Tooltip.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Tooltip, false);
+	}
+	if (Tooltip.IsEmpty())
+	{
+		return FECACommandResult::ValidationError(this, TEXT("tooltip or description is required"));
+	}
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	Graph->Modify();
+	FString EditError;
+	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
+	{
+		const FName ParamName(*Name);
+		const FPropertyBagPropertyDesc* ExistingDesc = Bag.FindPropertyDescByName(ParamName);
+		if (!ExistingDesc)
+		{
+			EditError = FString::Printf(TEXT("Parameter not found: %s"), *Name);
+			return;
+		}
+
+		FPropertyBagPropertyDesc UpdatedDesc = *ExistingDesc;
+#if WITH_EDITOR
+		UpdatedDesc.SetMetaData(ECAPcgHelpers::TooltipMetaKey, Tooltip);
+#endif
+		TArray<FPropertyBagPropertyDesc> Descs;
+		Descs.Add(UpdatedDesc);
+		const EPropertyBagAlterationResult Result = Bag.AddProperties(Descs, true);
+		if (!ECAPcgHelpers::IsSuccess(Result))
+		{
+			EditError = FString::Printf(TEXT("Failed to set tooltip for parameter '%s': %s"), *Name, *ECAPcgHelpers::PropertyBagAlterationResultToString(Result));
+		}
+	});
+
+	if (!EditError.IsEmpty())
+	{
+		return FECACommandResult::Error(EditError);
+	}
+
+	FString SaveError;
+	if (!ECAPcgHelpers::SaveAssetPackage(Graph, SaveError))
+	{
+		return FECACommandResult::Error(SaveError);
+	}
+
+	TSharedPtr<FJsonObject> Result = ECAPcgHelpers::BuildGraphParameterResult(Graph, GraphPath, Name);
+	Result->SetStringField(TEXT("tooltip"), Tooltip);
+	Result->SetStringField(TEXT("description"), Tooltip);
+	return FECACommandResult::Success(Result);
 }
 
 //==============================================================================

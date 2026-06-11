@@ -13,7 +13,7 @@ public:
 	virtual FString GetName() const override { return TEXT("create_blueprint"); }
 	virtual FString GetDescription() const override { return TEXT("Create a new Blueprint asset"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -22,7 +22,7 @@ public:
 			{ TEXT("path"), TEXT("string"), TEXT("Content path for the Blueprint"), false, TEXT("/Game/Blueprints/") }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -35,7 +35,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_component"); }
 	virtual FString GetDescription() const override { return TEXT("Add a component to a Blueprint"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -45,7 +45,7 @@ public:
 			{ TEXT("attach_to"), TEXT("string"), TEXT("Name of component to attach to"), false }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -58,14 +58,14 @@ public:
 	virtual FString GetName() const override { return TEXT("compile_blueprint"); }
 	virtual FString GetDescription() const override { return TEXT("Compile a Blueprint"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
 			{ TEXT("blueprint_path"), TEXT("string"), TEXT("Path to the Blueprint asset"), true }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -78,7 +78,7 @@ public:
 	virtual FString GetName() const override { return TEXT("add_blueprint_variable"); }
 	virtual FString GetDescription() const override { return TEXT("Add a member variable to a Blueprint"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -86,11 +86,36 @@ public:
 			{ TEXT("variable_name"), TEXT("string"), TEXT("Name for the variable"), true },
 			{ TEXT("variable_type"), TEXT("string"), TEXT("Type of variable (Boolean, Integer, Float, String, Vector, Rotator, Transform)"), true },
 			{ TEXT("default_value"), TEXT("any"), TEXT("Default value for the variable"), false },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the variable"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false },
 			{ TEXT("is_instance_editable"), TEXT("boolean"), TEXT("Allow editing per instance"), false, TEXT("false") },
 			{ TEXT("is_blueprint_read_only"), TEXT("boolean"), TEXT("Make read-only in Blueprints"), false, TEXT("false") }
 		};
 	}
-	
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Set a Blueprint variable tooltip
+ */
+class FECACommand_SetBlueprintVariableTooltip : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_blueprint_variable_tooltip"); }
+	virtual FString GetDescription() const override { return TEXT("Set a Blueprint variable developer tooltip. Accepts tooltip or description."); }
+	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("blueprint_path"), TEXT("string"), TEXT("Path to the Blueprint asset"), true },
+			{ TEXT("variable_name"), TEXT("string"), TEXT("Name of the variable"), true },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the variable"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false }
+		};
+	}
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -103,7 +128,7 @@ public:
 	virtual FString GetName() const override { return TEXT("spawn_blueprint_actor"); }
 	virtual FString GetDescription() const override { return TEXT("Spawn an instance of a Blueprint in the level"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -113,7 +138,7 @@ public:
 			{ TEXT("actor_name"), TEXT("string"), TEXT("Display name for the spawned actor"), false }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -127,7 +152,7 @@ public:
 	virtual FString GetDescription() const override { return TEXT("Get information about a Blueprint"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
 	virtual bool IsMutating() const override { return false; }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -189,14 +214,14 @@ public:
 	virtual FString GetName() const override { return TEXT("open_blueprint_editor"); }
 	virtual FString GetDescription() const override { return TEXT("Open a Blueprint in the Blueprint editor"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
 			{ TEXT("blueprint_path"), TEXT("string"), TEXT("Path to the Blueprint asset"), true }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
@@ -209,7 +234,7 @@ public:
 	virtual FString GetName() const override { return TEXT("delete_blueprint_function"); }
 	virtual FString GetDescription() const override { return TEXT("Delete a function graph from a Blueprint"); }
 	virtual FString GetCategory() const override { return TEXT("Blueprint"); }
-	
+
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
@@ -217,6 +242,6 @@ public:
 			{ TEXT("function_name"), TEXT("string"), TEXT("Name of the function to delete"), true }
 		};
 	}
-	
+
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };

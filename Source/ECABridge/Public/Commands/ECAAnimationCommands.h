@@ -149,6 +149,25 @@ public:
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
+// --- set_anim_bp_variable_tooltip -----------------------------------------
+class FECACommand_SetAnimBPVariableTooltip : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_anim_bp_variable_tooltip"); }
+	virtual FString GetDescription() const override { return TEXT("Set an Animation Blueprint variable tooltip. Accepts tooltip or description."); }
+	virtual FString GetCategory() const override { return TEXT("Animation"); }
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("anim_bp_path"), TEXT("string"), TEXT("Asset path to the Animation Blueprint"), true },
+			{ TEXT("variable_name"), TEXT("string"), TEXT("Name of the variable"), true },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the variable"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false }
+		};
+	}
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
 // --- list_anim_bp_state_machines ------------------------------------------
 class FECACommand_ListAnimBPStateMachines : public IECACommand
 {

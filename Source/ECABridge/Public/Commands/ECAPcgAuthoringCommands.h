@@ -173,7 +173,9 @@ public:
 			{ TEXT("container"), TEXT("string"), TEXT("Container type: none or array"), false, TEXT("none") },
 			{ TEXT("object_class"), TEXT("string"), TEXT("Optional UObject/UClass type for object, soft_object, and class parameters"), false },
 			{ TEXT("overwrite"), TEXT("boolean"), TEXT("Whether to replace an existing parameter with the same name"), false, TEXT("false") },
-			{ TEXT("value"), TEXT("object"), TEXT("Optional default value. Arrays expect a JSON array."), false }
+			{ TEXT("value"), TEXT("object"), TEXT("Optional default value. Arrays expect a JSON array."), false },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the parameter"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false }
 		};
 	}
 
@@ -182,6 +184,39 @@ public:
 		return MakeECAObjectSchema({
 			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset") },
 			{ TEXT("name"), TEXT("string"), TEXT("Parameter added") },
+			{ TEXT("parameters"), TEXT("array"), TEXT("Updated parameter list"), TEXT("object") }
+		});
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
+ * Set a PCG graph user parameter tooltip.
+ */
+class FECACommand_SetPCGGraphParameterTooltip : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("set_pcg_graph_parameter_tooltip"); }
+	virtual FString GetDescription() const override { return TEXT("Set a PCG graph user parameter tooltip. Accepts tooltip or description."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset"), true },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter name"), true },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Developer tooltip shown for the parameter"), false },
+			{ TEXT("description"), TEXT("string"), TEXT("Alias for tooltip"), false }
+		};
+	}
+
+	virtual TSharedPtr<FJsonObject> GetOutputSchema() const override
+	{
+		return MakeECAObjectSchema({
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset") },
+			{ TEXT("name"), TEXT("string"), TEXT("Parameter modified") },
+			{ TEXT("tooltip"), TEXT("string"), TEXT("Tooltip applied") },
 			{ TEXT("parameters"), TEXT("array"), TEXT("Updated parameter list"), TEXT("object") }
 		});
 	}

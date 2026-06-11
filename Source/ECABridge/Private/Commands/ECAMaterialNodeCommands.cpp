@@ -21,6 +21,7 @@
 #include "Materials/MaterialExpressionFresnel.h"
 #include "Materials/MaterialExpressionIf.h"
 #include "Materials/MaterialExpressionLinearInterpolate.h"
+#include "Materials/MaterialExpressionParameter.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialExpressionNormalize.h"
 #include "Materials/MaterialExpressionOneMinus.h"
@@ -73,6 +74,7 @@ REGISTER_ECA_COMMAND(FECACommand_GetMaterialNodeInfo)
 REGISTER_ECA_COMMAND(FECACommand_DeleteMaterialNode)
 REGISTER_ECA_COMMAND(FECACommand_DisconnectMaterialNode)
 REGISTER_ECA_COMMAND(FECACommand_SetMaterialNodeProperty)
+REGISTER_ECA_COMMAND(FECACommand_SetMaterialNodeDescription)
 REGISTER_ECA_COMMAND(FECACommand_BatchEditMaterialNodes)
 REGISTER_ECA_COMMAND(FECACommand_ListMaterialExpressionTypes)
 REGISTER_ECA_COMMAND(FECACommand_GetMaterialErrors)
@@ -271,6 +273,10 @@ static FVector2D GetMaterialNodePosition(const TSharedPtr<FJsonObject>& Params, 
 
 static UMaterialExpression* FindExpressionByGuid(UMaterial* Material, const FGuid& Guid)
 {
+	if (!Material || !Material->GetEditorOnlyData())
+	{
+		return nullptr;
+	}
 	for (UMaterialExpression* Expr : Material->GetEditorOnlyData()->ExpressionCollection.Expressions)
 	{
 		if (Expr && Expr->MaterialExpressionGuid == Guid)
@@ -293,6 +299,7 @@ static TSharedPtr<FJsonObject> ExpressionToJson(UMaterialExpression* Expression)
 	
 	if (!Expression->Desc.IsEmpty())
 	{
+		ExprJson->SetStringField(TEXT("tooltip"), Expression->Desc);
 		ExprJson->SetStringField(TEXT("description"), Expression->Desc);
 	}
 	
@@ -708,6 +715,17 @@ FECACommandResult FECACommand_AddMaterialNode::Execute(const TSharedPtr<FJsonObj
 	UMaterialExpression* NewExpression = NewObject<UMaterialExpression>(Material, ExpressionClass, NAME_None, RF_Transactional);
 	NewExpression->MaterialExpressionEditorX = Position.X;
 	NewExpression->MaterialExpressionEditorY = Position.Y;
+
+	FString NodeDescription;
+	GetStringParam(Params, TEXT("tooltip"), NodeDescription, false);
+	if (NodeDescription.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), NodeDescription, false);
+	}
+	if (!NodeDescription.IsEmpty())
+	{
+		NewExpression->Desc = NodeDescription;
+	}
 	
 	// Configure based on type
 	FString ParameterName;
@@ -1593,8 +1611,18 @@ FECACommandResult FECACommand_SetMaterialNodeProperty::Execute(const TSharedPtr<
 	double ValueNum;
 	FString ValueStr;
 	bool ValueBool;
-	
-	if (PropertyName.Equals(TEXT("ParameterName"), ESearchCase::IgnoreCase))
+
+	if (PropertyName.Equals(TEXT("Desc"), ESearchCase::IgnoreCase) ||
+		PropertyName.Equals(TEXT("Tooltip"), ESearchCase::IgnoreCase) ||
+		PropertyName.Equals(TEXT("Description"), ESearchCase::IgnoreCase))
+	{
+		if (GetStringParam(Params, TEXT("value"), ValueStr, false))
+		{
+			Expression->Desc = ValueStr;
+			bPropertySet = true;
+		}
+	}
+	else if (PropertyName.Equals(TEXT("ParameterName"), ESearchCase::IgnoreCase))
 	{
 		if (GetStringParam(Params, TEXT("value"), ValueStr, false))
 		{
@@ -2066,6 +2094,99 @@ FECACommandResult FECACommand_SetMaterialNodeProperty::Execute(const TSharedPtr<
 }
 
 //------------------------------------------------------------------------------
+// SetMaterialNodeDescription
+//------------------------------------------------------------------------------
+
+FECACommandResult FECACommand_SetMaterialNodeDescription::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString MaterialPath;
+	if (!GetStringParam(Params, TEXT("material_path"), MaterialPath))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: material_path"));
+	}
+
+	FString Description;
+	GetStringParam(Params, TEXT("tooltip"), Description, false);
+	if (Description.IsEmpty())
+	{
+		GetStringParam(Params, TEXT("description"), Description, false);
+	}
+	if (Description.IsEmpty())
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: tooltip or description"));
+	}
+
+	FString NodeId;
+	FString ParameterName;
+	GetStringParam(Params, TEXT("node_id"), NodeId, false);
+	GetStringParam(Params, TEXT("parameter_name"), ParameterName, false);
+	if (NodeId.IsEmpty() && ParameterName.IsEmpty())
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: node_id or parameter_name"));
+	}
+
+	UMaterial* Material = LoadMaterialByPath(MaterialPath);
+	if (!Material || !Material->GetEditorOnlyData())
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("Material not found: %s"), *MaterialPath));
+	}
+
+	UMaterialExpression* TargetExpression = nullptr;
+	if (!NodeId.IsEmpty())
+	{
+		FGuid NodeGuid;
+		if (!FGuid::Parse(NodeId, NodeGuid))
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("Invalid node GUID: %s"), *NodeId));
+		}
+		TargetExpression = FindExpressionByGuid(Material, NodeGuid);
+	}
+	else
+	{
+		const FName TargetParameterName(*ParameterName);
+		for (UMaterialExpression* Expression : Material->GetEditorOnlyData()->ExpressionCollection.Expressions)
+		{
+			if (UMaterialExpressionParameter* ParameterExpression = Cast<UMaterialExpressionParameter>(Expression))
+			{
+				if (ParameterExpression->ParameterName == TargetParameterName)
+				{
+					TargetExpression = Expression;
+					break;
+				}
+			}
+			else if (UMaterialExpressionTextureSampleParameter2D* TextureParameter = Cast<UMaterialExpressionTextureSampleParameter2D>(Expression))
+			{
+				if (TextureParameter->ParameterName == TargetParameterName)
+				{
+					TargetExpression = Expression;
+					break;
+				}
+			}
+		}
+	}
+
+	if (!TargetExpression)
+	{
+		return FECACommandResult::Error(NodeId.IsEmpty()
+			? FString::Printf(TEXT("Material parameter not found: %s"), *ParameterName)
+			: FString::Printf(TEXT("Material node not found: %s"), *NodeId));
+	}
+
+	Material->PreEditChange(nullptr);
+	TargetExpression->Desc = Description;
+	ClearMaterialCompilationErrors(Material);
+	Material->PostEditChange();
+	Material->MarkPackageDirty();
+	RefreshMaterialEditorUI(Material);
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("node_id"), TargetExpression->MaterialExpressionGuid.ToString());
+	Result->SetStringField(TEXT("tooltip"), Description);
+	Result->SetStringField(TEXT("description"), Description);
+	return FECACommandResult::Success(Result);
+}
+
+//------------------------------------------------------------------------------
 // BatchEditMaterialNodes
 //------------------------------------------------------------------------------
 
@@ -2142,6 +2263,12 @@ FECACommandResult FECACommand_BatchEditMaterialNodes::Execute(const TSharedPtr<F
 		UMaterialExpression* NewExpression = NewObject<UMaterialExpression>(Material, ExpressionClass, NAME_None, RF_Transactional);
 		NewExpression->MaterialExpressionEditorX = Position.X;
 		NewExpression->MaterialExpressionEditorY = Position.Y;
+
+		FString NodeDescription;
+		if ((*NodeObj)->TryGetStringField(TEXT("tooltip"), NodeDescription) || (*NodeObj)->TryGetStringField(TEXT("description"), NodeDescription))
+		{
+			NewExpression->Desc = NodeDescription;
+		}
 		
 		// Configure parameters
 		FString ParameterName;
