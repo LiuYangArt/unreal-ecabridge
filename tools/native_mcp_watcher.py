@@ -31,7 +31,11 @@ def default_project_root() -> Path:
 
 REPO_ROOT = default_project_root()
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / "artifacts" / "native-mcp-watcher"
-DEFAULT_NATIVE_PATHS = ["Engine/Plugins/Experimental/ModelContextProtocol"]
+DEFAULT_NATIVE_PATHS = [
+    "Engine/Plugins/Experimental/ModelContextProtocol",
+    "Engine/Plugins/Experimental/ToolsetRegistry",
+    "Engine/Plugins/Experimental/Toolsets",
+]
 TOOL_NAME_RE = re.compile(r"[\"']([a-z][a-z0-9]*_[a-z0-9_]+)[\"']")
 ECA_GETNAME_RE = re.compile(r"GetName\(\)\s*const(?:\s+override)?\s*\{\s*return\s+TEXT\(\"([a-z0-9_]+)\"\)")
 REGISTER_RE = re.compile(r"REGISTER_ECA_COMMAND\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")

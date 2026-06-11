@@ -12,7 +12,7 @@ Use the bundled setup script when the local Epic UnrealEngine checkout is missin
 python skills\native-mcp-watcher\scripts\setup_native_mcp_checkout.py --target F:\CodeProjects\UnrealEngine
 ```
 
-It creates or updates a partial+sparse checkout of `https://github.com/EpicGames/UnrealEngine.git`, checks out `ue5-main`, limits files to `Engine/Plugins/Experimental/ModelContextProtocol`, and fetches `origin/release`, `origin/5.8`, and `origin/5.7` for diffing.
+It creates or updates a partial+sparse checkout of `https://github.com/EpicGames/UnrealEngine.git`, checks out `ue5-main`, limits files to native MCP plus AI toolset plugins (`Engine/Plugins/Experimental/ModelContextProtocol`, `Engine/Plugins/Experimental/ToolsetRegistry`, and `Engine/Plugins/Experimental/Toolsets`), and fetches `origin/release`, `origin/5.8`, and `origin/5.7` for diffing.
 
 ## Workflow
 1. Ensure a local Epic `UnrealEngine` checkout exists. The repo is private; the user must have GitHub access linked to Epic.
@@ -36,6 +36,6 @@ It creates or updates a partial+sparse checkout of `https://github.com/EpicGames
 - `clean-room-spec-template.md`: behavior spec scaffold for the actual port.
 
 ## Notes
-- Default watched path: `Engine/Plugins/Experimental/ModelContextProtocol`.
+- Default watched paths: `Engine/Plugins/Experimental/ModelContextProtocol`, `Engine/Plugins/Experimental/ToolsetRegistry`, and `Engine/Plugins/Experimental/Toolsets`.
 - Use repeated `--path` arguments if Epic moves native MCP files.
 - The watcher needs refs already fetchable by git; use `--fetch` to update remotes.

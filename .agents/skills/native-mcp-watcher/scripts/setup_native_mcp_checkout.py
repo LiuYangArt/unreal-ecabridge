@@ -8,7 +8,11 @@ from pathlib import Path
 
 
 DEFAULT_REPO_URL = "https://github.com/EpicGames/UnrealEngine.git"
-DEFAULT_PATH = "Engine/Plugins/Experimental/ModelContextProtocol"
+DEFAULT_PATHS = [
+    "Engine/Plugins/Experimental/ModelContextProtocol",
+    "Engine/Plugins/Experimental/ToolsetRegistry",
+    "Engine/Plugins/Experimental/Toolsets",
+]
 DEFAULT_REFS = ["release", "5.8", "5.7"]
 
 
@@ -23,7 +27,7 @@ def is_git_repo(path: Path) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
-def setup_checkout(target: Path, repo_url: str, branch: str, sparse_path: str, refs: list[str], fetch: bool) -> None:
+def setup_checkout(target: Path, repo_url: str, branch: str, sparse_paths: list[str], refs: list[str], fetch: bool) -> None:
     target = target.resolve()
     if target.exists() and not is_git_repo(target):
         raise RuntimeError(f"Target exists but is not a git repo: {target}")
@@ -44,17 +48,17 @@ def setup_checkout(target: Path, repo_url: str, branch: str, sparse_path: str, r
             run(["git", "fetch", "--filter=blob:none", "origin", branch], cwd=target)
         run(["git", "checkout", branch], cwd=target)
 
-    run(["git", "sparse-checkout", "set", sparse_path], cwd=target)
+    run(["git", "sparse-checkout", "set", *sparse_paths], cwd=target)
 
     if fetch:
         for ref in refs:
             run(["git", "fetch", "--filter=blob:none", "--depth=1", "origin", f"{ref}:refs/remotes/origin/{ref}"], cwd=target)
 
-    plugin_path = target / sparse_path
-    if not plugin_path.exists():
-        raise RuntimeError(f"Sparse path was not checked out: {plugin_path}")
-
-    print(str(plugin_path))
+    for sparse_path in sparse_paths:
+        plugin_path = target / sparse_path
+        if not plugin_path.exists():
+            raise RuntimeError(f"Sparse path was not checked out: {plugin_path}")
+        print(str(plugin_path))
 
 
 def main() -> int:
@@ -62,7 +66,7 @@ def main() -> int:
     parser.add_argument("--target", default=r"F:\CodeProjects\UnrealEngine", help="Target UnrealEngine checkout directory")
     parser.add_argument("--repo-url", default=DEFAULT_REPO_URL, help="Epic UnrealEngine git URL")
     parser.add_argument("--branch", default="ue5-main", help="Branch to checkout")
-    parser.add_argument("--sparse-path", default=DEFAULT_PATH, help="Sparse path to checkout")
+    parser.add_argument("--sparse-path", action="append", default=None, help="Sparse path to checkout; repeatable")
     parser.add_argument("--ref", action="append", dest="refs", default=None, help="Extra ref to fetch; repeatable")
     parser.add_argument("--no-fetch", action="store_true", help="Skip fetch for existing clones and extra refs")
     args = parser.parse_args()
@@ -71,7 +75,7 @@ def main() -> int:
         target=Path(args.target),
         repo_url=args.repo_url,
         branch=args.branch,
-        sparse_path=args.sparse_path,
+        sparse_paths=args.sparse_path or DEFAULT_PATHS,
         refs=args.refs or DEFAULT_REFS,
         fetch=not args.no_fetch,
     )
