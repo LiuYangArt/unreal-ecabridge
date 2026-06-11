@@ -174,13 +174,14 @@ After the C++ command works, add a Python wrapper script, for example:
 
 Behavior:
 
-1. `load_category` for Blueprint / Blueprint Node / Asset.
-2. Optional cleanup of disconnected MCP leftovers, same idea as existing cleanup script.
+1. `load_category` for Blueprint / Blueprint Node / Asset / Editor.
+2. Optional pre-layout cleanup of disconnected MCP leftovers, using the same rule as project-side `Tools/eca_cleanup_blueprint_graph.py`: delete unconnected nodes whose class is in an allowlist, defaulting to `K2Node_VariableGet`.
 3. Call `auto_layout_blueprint_graph`.
 4. Call `compile_blueprint`.
 5. Call `save_asset` unless `--no-save`.
 6. Print JSON summary.
 
+Cleanup should stay in the wrapper, not inside `auto_layout_blueprint_graph`, because it mutates graph topology. Keep it explicit or opt-in, support `--dry-run`, and never delete arbitrary orphan nodes without an allowlist.
 Example CLI:
 
 ```powershell

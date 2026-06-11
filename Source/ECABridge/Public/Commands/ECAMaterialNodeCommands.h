@@ -298,32 +298,23 @@ public:
 /**
  * Auto-layout material nodes for visual clarity
  * 
- * Layout strategies:
- * - horizontal: Arrange nodes left-to-right from material inputs (default)
- * - vertical: Arrange nodes top-to-bottom from material inputs
- * - tree: Arrange as a tree structure from material input connections
- * - compact: Minimize total graph area while maintaining readability
- * 
- * The algorithm:
- * 1. Identifies root nodes (material input connections: BaseColor, Normal, etc.)
- * 2. Traverses expression connections backward to determine node order/depth
- * 3. Positions nodes with consistent spacing to avoid overlaps
- * 4. Aligns data-flow nodes near their consumers
+ * Uses the shared layered graph layout core with a Material-specific adapter.
+ * The adapter preserves comments/reroutes, traces through skipped reroute nodes,
+ * lays out data-flow edges left-to-right, and returns machine-readable diagnostics.
  */
 class FECACommand_AutoLayoutMaterialGraph : public IECACommand
 {
 public:
 	virtual FString GetName() const override { return TEXT("auto_layout_material_graph"); }
-	virtual FString GetDescription() const override { return TEXT("Automatically arrange material expression nodes for visual clarity. Organizes by connection flow with consistent spacing."); }
+	virtual FString GetDescription() const override { return TEXT("Automatically arrange material expression nodes with the shared layered graph layout engine."); }
 	virtual FString GetCategory() const override { return TEXT("Material Node"); }
 	
 	virtual TArray<FECACommandParam> GetParameters() const override
 	{
 		return {
 			{ TEXT("material_path"), TEXT("string"), TEXT("Path to the Material asset"), true },
-			{ TEXT("strategy"), TEXT("string"), TEXT("Layout strategy: horizontal (default), vertical, tree, compact"), false, TEXT("horizontal") },
-			{ TEXT("spacing_x"), TEXT("number"), TEXT("Horizontal spacing between nodes (default: 300)"), false, TEXT("300") },
-			{ TEXT("spacing_y"), TEXT("number"), TEXT("Vertical spacing between nodes (default: 150)"), false, TEXT("150") },
+			{ TEXT("spacing_x"), TEXT("number"), TEXT("Horizontal rank spacing between nodes (default: 300)"), false, TEXT("300") },
+			{ TEXT("spacing_y"), TEXT("number"), TEXT("Vertical spacing within ranks (default: 150)"), false, TEXT("150") },
 			{ TEXT("node_ids"), TEXT("array"), TEXT("Specific node IDs to layout (optional, layouts all if not specified)"), false }
 		};
 	}

@@ -2,11 +2,13 @@
 
 #include "Commands/ECAPcgAuthoringCommands.h"
 #include "Commands/ECACommand.h"
+#include "BlueprintLayout/LayeredGraphLayout.h"
 
 #include "PCGGraph.h"
 #include "PCGNode.h"
 #include "PCGSettings.h"
 #include "PCGPin.h"
+#include "PCGEdge.h"
 #include "PCGInputOutputSettings.h"
 
 #include "Engine/StaticMesh.h"
@@ -24,6 +26,7 @@
 REGISTER_ECA_COMMAND(FECACommand_CreatePCGGraph)
 REGISTER_ECA_COMMAND(FECACommand_AddPCGNode)
 REGISTER_ECA_COMMAND(FECACommand_ConnectPCGNodes)
+REGISTER_ECA_COMMAND(FECACommand_AutoLayoutPCGGraph)
 REGISTER_ECA_COMMAND(FECACommand_SetPCGNodeProperty)
 REGISTER_ECA_COMMAND(FECACommand_AddPCGGraphParameter)
 REGISTER_ECA_COMMAND(FECACommand_RenamePCGGraphParameter)
@@ -834,6 +837,217 @@ FECACommandResult FECACommand_ConnectPCGNodes::Execute(const TSharedPtr<FJsonObj
 	Out->SetStringField(TEXT("to_node_id"), ToId);
 	Out->SetStringField(TEXT("to_pin"), ToPinName);
 	return FECACommandResult::Success(Out);
+}
+
+//==============================================================================
+// auto_layout_pcg_graph
+//==============================================================================
+FECACommandResult FECACommand_AutoLayoutPCGGraph::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+#if WITH_EDITOR
+	FString GraphPath;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	int32 SpacingX = 320;
+	int32 SpacingY = 160;
+	if (Params->HasField(TEXT("spacing_x")))
+	{
+		SpacingX = FMath::Max(1, static_cast<int32>(Params->GetNumberField(TEXT("spacing_x"))));
+	}
+	if (Params->HasField(TEXT("spacing_y")))
+	{
+		SpacingY = FMath::Max(1, static_cast<int32>(Params->GetNumberField(TEXT("spacing_y"))));
+	}
+
+	TSet<FString> SpecificNodeIds;
+	const TArray<TSharedPtr<FJsonValue>>* NodeIdsArray = nullptr;
+	if (Params->TryGetArrayField(TEXT("node_ids"), NodeIdsArray) && NodeIdsArray)
+	{
+		for (const TSharedPtr<FJsonValue>& IdValue : *NodeIdsArray)
+		{
+			FString NodeId;
+			if (IdValue->TryGetString(NodeId) && !NodeId.IsEmpty())
+			{
+				SpecificNodeIds.Add(NodeId);
+			}
+		}
+	}
+
+	TArray<UPCGNode*> NodesToLayout;
+	if (UPCGNode* InputNode = Graph->GetInputNode())
+	{
+		NodesToLayout.Add(InputNode);
+	}
+	if (UPCGNode* OutputNode = Graph->GetOutputNode())
+	{
+		NodesToLayout.AddUnique(OutputNode);
+	}
+	for (UPCGNode* Node : Graph->GetNodes())
+	{
+		if (Node)
+		{
+			NodesToLayout.AddUnique(Node);
+		}
+	}
+
+	for (int32 Index = NodesToLayout.Num() - 1; Index >= 0; --Index)
+	{
+		UPCGNode* Node = NodesToLayout[Index];
+		if (!Node || (SpecificNodeIds.Num() > 0 && !SpecificNodeIds.Contains(Node->GetName())))
+		{
+			NodesToLayout.RemoveAt(Index);
+		}
+	}
+
+	if (NodesToLayout.Num() == 0)
+	{
+		return FECACommandResult::Error(TEXT("No PCG nodes to layout"));
+	}
+
+	FLayeredGraphLayout Core;
+	FLayeredLayoutConfig LayoutConfig;
+	LayoutConfig.PaddingX = SpacingX;
+	LayoutConfig.PaddingY = SpacingY;
+
+	TMap<UPCGNode*, int32> NodeToVertexId;
+	TMap<int32, UPCGNode*> VertexIdToNode;
+	int32 NextVertexId = 0;
+	bool bHasAnchor = false;
+	for (UPCGNode* Node : NodesToLayout)
+	{
+		int32 PosX = 0;
+		int32 PosY = 0;
+		Node->GetNodePosition(PosX, PosY);
+		if (!bHasAnchor)
+		{
+			LayoutConfig.StartX = PosX;
+			LayoutConfig.StartY = PosY;
+			bHasAnchor = true;
+		}
+		else
+		{
+			LayoutConfig.StartX = FMath::Min(LayoutConfig.StartX, PosX);
+			LayoutConfig.StartY = FMath::Min(LayoutConfig.StartY, PosY);
+		}
+
+		const int32 VertexId = NextVertexId++;
+		NodeToVertexId.Add(Node, VertexId);
+		VertexIdToNode.Add(VertexId, Node);
+		Core.AddVertex(VertexId, 260, 120, PosX, PosY);
+	}
+
+	TSet<FString> SeenEdges;
+	int32 EdgeCount = 0;
+	for (UPCGNode* SourceNode : NodesToLayout)
+	{
+		const int32 SourceId = NodeToVertexId.FindRef(SourceNode);
+		int32 SourcePinIndex = 0;
+		for (const UPCGPin* Pin : SourceNode->GetOutputPins())
+		{
+			if (!Pin)
+			{
+				++SourcePinIndex;
+				continue;
+			}
+
+			for (const UPCGEdge* Edge : Pin->Edges)
+			{
+				if (!Edge || Edge->InputPin != Pin || !Edge->OutputPin || !Edge->OutputPin->Node)
+				{
+					continue;
+				}
+
+				UPCGNode* TargetNode = Edge->OutputPin->Node;
+				const int32* TargetId = NodeToVertexId.Find(TargetNode);
+				if (!TargetId)
+				{
+					continue;
+				}
+
+				const FString EdgeKey = FString::Printf(TEXT("%d:%d:%s:%s"), SourceId, *TargetId,
+					*Pin->Properties.Label.ToString(), *Edge->OutputPin->Properties.Label.ToString());
+				if (SeenEdges.Contains(EdgeKey))
+				{
+					continue;
+				}
+				SeenEdges.Add(EdgeKey);
+				Core.AddEdge(SourceId, *TargetId, 36 + SourcePinIndex * 24, 60, false);
+				++EdgeCount;
+			}
+			++SourcePinIndex;
+		}
+	}
+
+	FLayeredLayoutResult LayoutResult = Core.Solve(LayoutConfig);
+
+	Graph->Modify();
+	int32 NodesPositioned = 0;
+	for (const FLayeredLayoutVertex& Vertex : Core.GetVertices())
+	{
+		UPCGNode* Node = VertexIdToNode.FindRef(Vertex.Id);
+		if (!Node)
+		{
+			continue;
+		}
+		Node->Modify();
+		Node->SetNodePosition(Vertex.X, Vertex.Y);
+		++NodesPositioned;
+	}
+	Graph->PostEditChange();
+	Graph->MarkPackageDirty();
+
+	TArray<TSharedPtr<FJsonValue>> WarningsArray;
+	for (const FString& Warning : LayoutResult.Warnings)
+	{
+		WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> PositionedNodesArray;
+	for (const FLayeredLayoutVertex& Vertex : Core.GetVertices())
+	{
+		UPCGNode* Node = VertexIdToNode.FindRef(Vertex.Id);
+		if (!Node)
+		{
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
+		NodeObj->SetStringField(TEXT("node_id"), Node->GetName());
+		NodeObj->SetStringField(TEXT("node_title"), Node->GetAuthoredTitleName().ToString());
+		NodeObj->SetNumberField(TEXT("x"), Vertex.X);
+		NodeObj->SetNumberField(TEXT("y"), Vertex.Y);
+		NodeObj->SetNumberField(TEXT("rank"), Vertex.Rank);
+		PositionedNodesArray.Add(MakeShared<FJsonValueObject>(NodeObj));
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("asset_path"), GraphPath);
+	Result->SetStringField(TEXT("graph_path"), GraphPath);
+	Result->SetStringField(TEXT("graph_name"), Graph->GetName());
+	Result->SetStringField(TEXT("layout_engine"), TEXT("layered"));
+	Result->SetNumberField(TEXT("nodes_positioned"), NodesPositioned);
+	Result->SetNumberField(TEXT("edge_count"), EdgeCount);
+	Result->SetNumberField(TEXT("rank_count"), LayoutResult.RankCount);
+	Result->SetNumberField(TEXT("comments_wrapped"), 0);
+	Result->SetNumberField(TEXT("auto_knots_removed"), 0);
+	Result->SetNumberField(TEXT("auto_knots_created"), 0);
+	Result->SetNumberField(TEXT("spacing_x"), SpacingX);
+	Result->SetNumberField(TEXT("spacing_y"), SpacingY);
+	Result->SetArrayField(TEXT("warnings"), WarningsArray);
+	Result->SetArrayField(TEXT("positioned_nodes"), PositionedNodesArray);
+	return FECACommandResult::Success(Result);
+#else
+	return FECACommandResult::Error(TEXT("auto_layout_pcg_graph requires an editor build"));
+#endif
 }
 
 //==============================================================================

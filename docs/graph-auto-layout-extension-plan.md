@@ -136,6 +136,25 @@ Validation:
 
 Keep each new adapter narrow. Do not add toolbar UI or editor preferences until command behavior is validated through MCP.
 
+## Pre-Layout Cleanup
+
+Project-side `Tools/eca_cleanup_blueprint_graph.py` is a useful pattern for Blueprint finalization, but cleanup should not be embedded into layout commands by default.
+
+Current cleanup behavior:
+
+- Loads `Blueprint`, `Blueprint Node`, and `Asset` categories.
+- Dumps one Blueprint graph with positions.
+- Finds unconnected nodes whose class is in an allowlist.
+- Defaults the allowlist to `K2Node_VariableGet`.
+- Deletes those nodes, compiles the Blueprint, and saves unless `--dry-run` or `--no-save` is set.
+
+Recommended integration:
+
+- Keep cleanup in finalize/post-edit wrappers before layout.
+- Make cleanup opt-in, or at least constrained by an explicit allowlist.
+- Preserve `--dry-run` so agents can report candidates before deletion.
+- Run order should be cleanup, layout, compile, save.
+- Do not apply this Blueprint cleanup rule to Material, PCG, Animation Graph, or Control Rig until each graph type has its own safe orphan-node definition.
 ## Guardrails
 
 - Do not silently swallow layout failures. Return explicit `warnings` or an error.

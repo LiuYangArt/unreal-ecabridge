@@ -2,6 +2,7 @@
 
 #include "Commands/ECAMaterialNodeCommands.h"
 #include "Commands/ECACommand.h"
+#include "BlueprintLayout/LayeredGraphLayout.h"
 #include "Editor.h"
 #include "Toolkits/ToolkitManager.h"
 #include "IMaterialEditor.h"
@@ -3337,35 +3338,31 @@ FECACommandResult FECACommand_GetMaterialProperty::Execute(const TSharedPtr<FJso
 
 FECACommandResult FECACommand_AutoLayoutMaterialGraph::Execute(const TSharedPtr<FJsonObject>& Params)
 {
-	FString MaterialPath = Params->GetStringField(TEXT("material_path"));
-	
+	FString MaterialPath;
+	if (!GetStringParam(Params, TEXT("material_path"), MaterialPath))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("Missing required parameter: material_path"));
+	}
+
 	UMaterial* Material = LoadMaterialByPath(MaterialPath);
 	if (!Material || !Material->GetEditorOnlyData())
 	{
 		return FECACommandResult::Error(FString::Printf(TEXT("Failed to load material: %s"), *MaterialPath));
 	}
-	
-	// Get layout parameters
-	FString Strategy = TEXT("horizontal");
-	if (Params->HasField(TEXT("strategy")))
-	{
-		Strategy = Params->GetStringField(TEXT("strategy")).ToLower();
-	}
-	
+
 	int32 SpacingX = 300;
 	int32 SpacingY = 150;
 	if (Params->HasField(TEXT("spacing_x")))
 	{
-		SpacingX = static_cast<int32>(Params->GetNumberField(TEXT("spacing_x")));
+		SpacingX = FMath::Max(1, static_cast<int32>(Params->GetNumberField(TEXT("spacing_x"))));
 	}
 	if (Params->HasField(TEXT("spacing_y")))
 	{
-		SpacingY = static_cast<int32>(Params->GetNumberField(TEXT("spacing_y")));
+		SpacingY = FMath::Max(1, static_cast<int32>(Params->GetNumberField(TEXT("spacing_y"))));
 	}
-	
-	// Get specific node IDs if provided
+
 	TSet<FGuid> SpecificNodeIds;
-	const TArray<TSharedPtr<FJsonValue>>* NodeIdsArray;
+	const TArray<TSharedPtr<FJsonValue>>* NodeIdsArray = nullptr;
 	if (Params->TryGetArrayField(TEXT("node_ids"), NodeIdsArray) && NodeIdsArray)
 	{
 		for (const TSharedPtr<FJsonValue>& IdValue : *NodeIdsArray)
@@ -3381,399 +3378,234 @@ FECACommandResult FECACommand_AutoLayoutMaterialGraph::Execute(const TSharedPtr<
 			}
 		}
 	}
-	
-	// Collect nodes to layout
-	TArray<UMaterialExpression*> NodesToLayout;
-	for (UMaterialExpression* Expr : Material->GetEditorOnlyData()->ExpressionCollection.Expressions)
+
+	auto IsLayoutExpression = [](UMaterialExpression* Expr) -> bool
 	{
 		if (!Expr)
 		{
+			return false;
+		}
+
+		const FString ClassName = Expr->GetClass()->GetName();
+		return !ClassName.Contains(TEXT("Comment")) && !ClassName.Contains(TEXT("Reroute"));
+	};
+
+	auto EstimateNodeWidth = [](UMaterialExpression* Expr) -> int32
+	{
+		if (!Expr)
+		{
+			return 220;
+		}
+
+		const int32 MeasuredWidth = Expr->GetWidth();
+		if (MeasuredWidth > 0)
+		{
+			return MeasuredWidth;
+		}
+
+		const FString ClassName = Expr->GetClass()->GetName().Replace(TEXT("MaterialExpression"), TEXT(""));
+		return FMath::Max(220, ClassName.Len() * 8 + 80);
+	};
+
+	auto EstimateNodeHeight = [](UMaterialExpression* Expr) -> int32
+	{
+		if (!Expr)
+		{
+			return 100;
+		}
+
+		const int32 MeasuredHeight = Expr->GetHeight();
+		if (MeasuredHeight > 0)
+		{
+			return MeasuredHeight;
+		}
+
+		int32 InputCount = 0;
+		for (int32 InputIndex = 0; ; ++InputIndex)
+		{
+			if (!Expr->GetInput(InputIndex))
+			{
+				break;
+			}
+			++InputCount;
+		}
+		return FMath::Max(100, 48 + InputCount * 24);
+	};
+
+	TArray<UMaterialExpression*> NodesToLayout;
+	for (UMaterialExpression* Expr : Material->GetEditorOnlyData()->ExpressionCollection.Expressions)
+	{
+		if (!IsLayoutExpression(Expr))
+		{
 			continue;
 		}
-		
-		// Filter by specific node IDs if provided
-		if (SpecificNodeIds.Num() > 0)
+		if (SpecificNodeIds.Num() > 0 && !SpecificNodeIds.Contains(Expr->MaterialExpressionGuid))
 		{
-			if (!SpecificNodeIds.Contains(Expr->MaterialExpressionGuid))
-			{
-				continue;
-			}
+			continue;
 		}
-		
 		NodesToLayout.Add(Expr);
 	}
-	
+
 	if (NodesToLayout.Num() == 0)
 	{
-		return FECACommandResult::Error(TEXT("No nodes to layout"));
+		return FECACommandResult::Error(TEXT("No material expression nodes to layout"));
 	}
-	
-	// Build connection map: which expressions connect to which
-	// We'll trace from material inputs back through the graph
-	TMap<UMaterialExpression*, TSet<UMaterialExpression*>> ConsumersMap; // Who consumes this expression
-	TMap<UMaterialExpression*, TSet<UMaterialExpression*>> ProducersMap; // Who produces input for this expression
-	
-	// Helper to get expressions that feed into another expression
-	auto GetInputExpressions = [](UMaterialExpression* Expr) -> TArray<UMaterialExpression*>
+
+	FLayeredGraphLayout Core;
+	FLayeredLayoutConfig LayoutConfig;
+	LayoutConfig.PaddingX = SpacingX;
+	LayoutConfig.PaddingY = SpacingY;
+
+	bool bHasAnchor = false;
+	for (UMaterialExpression* Expr : NodesToLayout)
 	{
-		TArray<UMaterialExpression*> Inputs;
-		for (int32 i = 0; ; i++)
+		if (!bHasAnchor)
 		{
-			FExpressionInput* Input = Expr->GetInput(i);
+			LayoutConfig.StartX = Expr->MaterialExpressionEditorX;
+			LayoutConfig.StartY = Expr->MaterialExpressionEditorY;
+			bHasAnchor = true;
+		}
+		else
+		{
+			LayoutConfig.StartX = FMath::Min(LayoutConfig.StartX, Expr->MaterialExpressionEditorX);
+			LayoutConfig.StartY = FMath::Min(LayoutConfig.StartY, Expr->MaterialExpressionEditorY);
+		}
+	}
+
+	TMap<UMaterialExpression*, int32> ExpressionToVertexId;
+	TMap<int32, UMaterialExpression*> VertexIdToExpression;
+	int32 NextVertexId = 0;
+	for (UMaterialExpression* Expr : NodesToLayout)
+	{
+		const int32 VertexId = NextVertexId++;
+		ExpressionToVertexId.Add(Expr, VertexId);
+		VertexIdToExpression.Add(VertexId, Expr);
+		Core.AddVertex(VertexId, EstimateNodeWidth(Expr), EstimateNodeHeight(Expr),
+			Expr->MaterialExpressionEditorX, Expr->MaterialExpressionEditorY);
+	}
+
+	TFunction<void(UMaterialExpression*, TArray<UMaterialExpression*>&, TSet<UMaterialExpression*>&)> TraceLayoutProducers;
+	TraceLayoutProducers = [&](UMaterialExpression* Expr, TArray<UMaterialExpression*>& OutProducers, TSet<UMaterialExpression*>& Visited)
+	{
+		if (!Expr || Visited.Contains(Expr))
+		{
+			return;
+		}
+		Visited.Add(Expr);
+
+		if (ExpressionToVertexId.Contains(Expr))
+		{
+			OutProducers.AddUnique(Expr);
+			return;
+		}
+
+		for (int32 InputIndex = 0; ; ++InputIndex)
+		{
+			FExpressionInput* Input = Expr->GetInput(InputIndex);
 			if (!Input)
 			{
 				break;
 			}
-			if (Input->Expression)
-			{
-				Inputs.AddUnique(Input->Expression);
-			}
-		}
-		return Inputs;
-	};
-	
-	// Build the connection maps
-	for (UMaterialExpression* Expr : NodesToLayout)
-	{
-		TArray<UMaterialExpression*> Inputs = GetInputExpressions(Expr);
-		for (UMaterialExpression* InputExpr : Inputs)
-		{
-			if (NodesToLayout.Contains(InputExpr))
-			{
-				ConsumersMap.FindOrAdd(InputExpr).Add(Expr);
-				ProducersMap.FindOrAdd(Expr).Add(InputExpr);
-			}
-		}
-	}
-	
-	// Find material input connections (these are our "roots" in reverse)
-	// Material inputs: BaseColor, Metallic, Specular, Roughness, EmissiveColor, Opacity, 
-	// OpacityMask, Normal, Tangent, WorldPositionOffset, etc.
-	TArray<UMaterialExpression*> MaterialInputs;
-	
-	// Check each material input property
-	auto CheckMaterialInput = [&](FExpressionInput& Input)
-	{
-		if (Input.Expression && NodesToLayout.Contains(Input.Expression))
-		{
-			MaterialInputs.AddUnique(Input.Expression);
+			TraceLayoutProducers(Input->Expression, OutProducers, Visited);
 		}
 	};
-	
-	// Get all material input connections
-	if (Material->GetEditorOnlyData())
+
+	TSet<FString> SeenEdges;
+	int32 EdgeCount = 0;
+	for (UMaterialExpression* TargetExpr : NodesToLayout)
 	{
-		CheckMaterialInput(Material->GetEditorOnlyData()->BaseColor);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Metallic);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Specular);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Roughness);
-		CheckMaterialInput(Material->GetEditorOnlyData()->EmissiveColor);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Opacity);
-		CheckMaterialInput(Material->GetEditorOnlyData()->OpacityMask);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Normal);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Tangent);
-		CheckMaterialInput(Material->GetEditorOnlyData()->WorldPositionOffset);
-		CheckMaterialInput(Material->GetEditorOnlyData()->SubsurfaceColor);
-		CheckMaterialInput(Material->GetEditorOnlyData()->AmbientOcclusion);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Refraction);
-		CheckMaterialInput(Material->GetEditorOnlyData()->PixelDepthOffset);
-		CheckMaterialInput(Material->GetEditorOnlyData()->ShadingModelFromMaterialExpression);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Displacement);
-		CheckMaterialInput(Material->GetEditorOnlyData()->FrontMaterial);
-		CheckMaterialInput(Material->GetEditorOnlyData()->SurfaceThickness);
-		CheckMaterialInput(Material->GetEditorOnlyData()->Anisotropy);
-		CheckMaterialInput(Material->GetEditorOnlyData()->ClearCoat);
-		CheckMaterialInput(Material->GetEditorOnlyData()->ClearCoatRoughness);
-	}
-	
-	// Assign depths by traversing backward from material inputs
-	TMap<UMaterialExpression*, int32> NodeDepths;
-	
-	// BFS from material inputs going backward
-	TQueue<UMaterialExpression*> TraversalQueue;
-	TSet<UMaterialExpression*> Visited;
-	
-	// Start with nodes directly connected to material inputs (depth 0 = closest to material)
-	for (UMaterialExpression* Input : MaterialInputs)
-	{
-		NodeDepths.Add(Input, 0);
-		TraversalQueue.Enqueue(Input);
-		Visited.Add(Input);
-	}
-	
-	// If no material inputs, use nodes with consumers (outputs go somewhere)
-	if (MaterialInputs.Num() == 0)
-	{
-		for (UMaterialExpression* Expr : NodesToLayout)
+		const int32 TargetId = ExpressionToVertexId.FindRef(TargetExpr);
+		for (int32 InputIndex = 0; ; ++InputIndex)
 		{
-			if (ConsumersMap.Contains(Expr) && ConsumersMap[Expr].Num() > 0)
+			FExpressionInput* Input = TargetExpr->GetInput(InputIndex);
+			if (!Input)
 			{
-				// This node feeds into something but isn't a root yet
-				if (!ProducersMap.Contains(Expr) || ProducersMap[Expr].Num() == 0)
+				break;
+			}
+			if (!Input->Expression)
+			{
+				continue;
+			}
+
+			TArray<UMaterialExpression*> Producers;
+			TSet<UMaterialExpression*> Visited;
+			TraceLayoutProducers(Input->Expression, Producers, Visited);
+			for (UMaterialExpression* SourceExpr : Producers)
+			{
+				const int32 SourceId = ExpressionToVertexId.FindRef(SourceExpr);
+				const FString EdgeKey = FString::Printf(TEXT("%d:%d:%d"), SourceId, TargetId, InputIndex);
+				if (SeenEdges.Contains(EdgeKey))
 				{
-					// This has no producers, so it could be a parameter or constant
-					NodeDepths.Add(Expr, 0);
-					TraversalQueue.Enqueue(Expr);
-					Visited.Add(Expr);
+					continue;
 				}
+				SeenEdges.Add(EdgeKey);
+				Core.AddEdge(SourceId, TargetId, EstimateNodeHeight(SourceExpr) / 2, 36 + InputIndex * 24, false);
+				++EdgeCount;
 			}
 		}
 	}
-	
-	// If still no roots, just start with the first node
-	if (Visited.Num() == 0 && NodesToLayout.Num() > 0)
-	{
-		NodeDepths.Add(NodesToLayout[0], 0);
-		TraversalQueue.Enqueue(NodesToLayout[0]);
-		Visited.Add(NodesToLayout[0]);
-	}
-	
-	// Traverse backward through producers
-	while (!TraversalQueue.IsEmpty())
-	{
-		UMaterialExpression* Current;
-		TraversalQueue.Dequeue(Current);
-		
-		int32 CurrentDepth = NodeDepths.FindRef(Current);
-		
-		// Get all inputs (producers) for this node
-		TArray<UMaterialExpression*> Inputs = GetInputExpressions(Current);
-		for (UMaterialExpression* InputExpr : Inputs)
-		{
-			if (NodesToLayout.Contains(InputExpr) && !Visited.Contains(InputExpr))
-			{
-				Visited.Add(InputExpr);
-				NodeDepths.Add(InputExpr, CurrentDepth + 1);
-				TraversalQueue.Enqueue(InputExpr);
-			}
-		}
-	}
-	
-	// Handle any unvisited nodes (disconnected nodes)
-	for (UMaterialExpression* Expr : NodesToLayout)
-	{
-		if (!NodeDepths.Contains(Expr))
-		{
-			// Place disconnected nodes at the end
-			NodeDepths.Add(Expr, 0);
-		}
-	}
-	
-	// Group nodes by depth
-	TMap<int32, TArray<UMaterialExpression*>> NodesByDepth;
-	int32 MaxDepth = 0;
-	
-	for (const auto& Pair : NodeDepths)
-	{
-		NodesByDepth.FindOrAdd(Pair.Value).Add(Pair.Key);
-		MaxDepth = FMath::Max(MaxDepth, Pair.Value);
-	}
-	
-	// Calculate starting position (material result node position, or use a default)
-	// Material result is typically on the right side, so we'll position left of it
-	int32 StartX = 0;
-	int32 StartY = 0;
-	
-	// Use the minimum position of existing nodes as anchor
-	for (UMaterialExpression* Expr : NodesToLayout)
-	{
-		if (StartX == 0 && StartY == 0)
-		{
-			StartX = Expr->MaterialExpressionEditorX;
-			StartY = Expr->MaterialExpressionEditorY;
-		}
-		else
-		{
-			StartX = FMath::Min(StartX, Expr->MaterialExpressionEditorX);
-			StartY = FMath::Min(StartY, Expr->MaterialExpressionEditorY);
-		}
-	}
-	
-	// Position nodes based on strategy
-	// Note: In materials, depth 0 = closest to material output (right side)
-	// Higher depths = further left (input nodes, parameters, etc.)
+
+	FLayeredLayoutResult LayoutResult = Core.Solve(LayoutConfig);
+
+	Material->PreEditChange(nullptr);
 	int32 NodesPositioned = 0;
-	
-	if (Strategy == TEXT("vertical"))
+	for (const FLayeredLayoutVertex& Vertex : Core.GetVertices())
 	{
-		// Vertical: arrange top-to-bottom, with material inputs at top
-		for (int32 Depth = 0; Depth <= MaxDepth; Depth++)
+		UMaterialExpression* Expr = VertexIdToExpression.FindRef(Vertex.Id);
+		if (!Expr)
 		{
-			TArray<UMaterialExpression*>* NodesAtDepth = NodesByDepth.Find(Depth);
-			if (!NodesAtDepth)
-			{
-				continue;
-			}
-			
-			int32 Y = StartY + Depth * SpacingY;
-			int32 X = StartX;
-			
-			for (UMaterialExpression* Expr : *NodesAtDepth)
-			{
-				Expr->MaterialExpressionEditorX = X;
-				Expr->MaterialExpressionEditorY = Y;
-				X += SpacingX;
-				NodesPositioned++;
-			}
+			continue;
 		}
+		Expr->MaterialExpressionEditorX = Vertex.X;
+		Expr->MaterialExpressionEditorY = Vertex.Y;
+		++NodesPositioned;
 	}
-	else if (Strategy == TEXT("tree"))
-	{
-		// Tree: center producers under their consumers
-		TMap<UMaterialExpression*, int32> SubtreeWidths;
-		
-		// Calculate subtree widths from deepest to shallowest
-		for (int32 Depth = MaxDepth; Depth >= 0; Depth--)
-		{
-			TArray<UMaterialExpression*>* NodesAtDepth = NodesByDepth.Find(Depth);
-			if (!NodesAtDepth)
-			{
-				continue;
-			}
-			
-			for (UMaterialExpression* Expr : *NodesAtDepth)
-			{
-				int32 Width = 1;
-				
-				// Sum widths of producer nodes
-				TArray<UMaterialExpression*> Inputs = GetInputExpressions(Expr);
-				for (UMaterialExpression* InputExpr : Inputs)
-				{
-					if (SubtreeWidths.Contains(InputExpr))
-					{
-						Width += SubtreeWidths[InputExpr];
-					}
-				}
-				
-				SubtreeWidths.Add(Expr, FMath::Max(1, Width));
-			}
-		}
-		
-		// Position nodes
-		TMap<UMaterialExpression*, int32> NodeYPositions;
-		int32 CurrentY = StartY;
-		
-		// Position depth 0 (material input nodes) first
-		TArray<UMaterialExpression*>* RootNodes = NodesByDepth.Find(0);
-		if (RootNodes)
-		{
-			for (UMaterialExpression* Root : *RootNodes)
-			{
-				int32 Width = SubtreeWidths.FindRef(Root);
-				NodeYPositions.Add(Root, CurrentY + (Width * SpacingY) / 2);
-				Root->MaterialExpressionEditorX = StartX;
-				Root->MaterialExpressionEditorY = NodeYPositions[Root];
-				CurrentY += Width * SpacingY;
-				NodesPositioned++;
-			}
-		}
-		
-		// Position remaining depths
-		for (int32 Depth = 1; Depth <= MaxDepth; Depth++)
-		{
-			TArray<UMaterialExpression*>* NodesAtDepth = NodesByDepth.Find(Depth);
-			if (!NodesAtDepth)
-			{
-				continue;
-			}
-			
-			// Position to the left of previous depth
-			int32 X = StartX - Depth * SpacingX;
-			
-			for (UMaterialExpression* Expr : *NodesAtDepth)
-			{
-				if (!NodeYPositions.Contains(Expr))
-				{
-					Expr->MaterialExpressionEditorX = X;
-					Expr->MaterialExpressionEditorY = StartY;
-					NodeYPositions.Add(Expr, StartY);
-				}
-				else
-				{
-					Expr->MaterialExpressionEditorX = X;
-					Expr->MaterialExpressionEditorY = NodeYPositions[Expr];
-				}
-				NodesPositioned++;
-			}
-		}
-	}
-	else if (Strategy == TEXT("compact"))
-	{
-		// Compact: grid packing
-		int32 NodesPerRow = FMath::Max(1, FMath::CeilToInt(FMath::Sqrt((float)NodesToLayout.Num())));
-		int32 Index = 0;
-		
-		for (UMaterialExpression* Expr : NodesToLayout)
-		{
-			int32 Row = Index / NodesPerRow;
-			int32 Col = Index % NodesPerRow;
-			
-			Expr->MaterialExpressionEditorX = StartX + Col * SpacingX;
-			Expr->MaterialExpressionEditorY = StartY + Row * SpacingY;
-			
-			Index++;
-			NodesPositioned++;
-		}
-	}
-	else // horizontal (default)
-	{
-		// Horizontal: arrange left-to-right
-		// Depth 0 (closest to material) on the right, higher depths on the left
-		for (int32 Depth = 0; Depth <= MaxDepth; Depth++)
-		{
-			TArray<UMaterialExpression*>* NodesAtDepth = NodesByDepth.Find(Depth);
-			if (!NodesAtDepth)
-			{
-				continue;
-			}
-			
-			// Sort by Y position to maintain relative vertical order
-			NodesAtDepth->Sort([](const UMaterialExpression& A, const UMaterialExpression& B) {
-				return A.MaterialExpressionEditorY < B.MaterialExpressionEditorY;
-			});
-			
-			// Position: depth 0 is rightmost, higher depths move left
-			int32 X = StartX - Depth * SpacingX;
-			int32 Y = StartY;
-			
-			for (UMaterialExpression* Expr : *NodesAtDepth)
-			{
-				Expr->MaterialExpressionEditorX = X;
-				Expr->MaterialExpressionEditorY = Y;
-				Y += SpacingY;
-				NodesPositioned++;
-			}
-		}
-	}
-	
-	// Mark material as dirty and refresh
+
+	ClearMaterialCompilationErrors(Material);
 	Material->PostEditChange();
 	Material->MarkPackageDirty();
 	RefreshMaterialEditorUI(Material);
-	
-	// Build result
-	TSharedPtr<FJsonObject> Result = MakeResult();
-	Result->SetStringField(TEXT("material_path"), MaterialPath);
-	Result->SetStringField(TEXT("strategy"), Strategy);
-	Result->SetNumberField(TEXT("nodes_positioned"), NodesPositioned);
-	Result->SetNumberField(TEXT("max_depth"), MaxDepth);
-	Result->SetNumberField(TEXT("spacing_x"), SpacingX);
-	Result->SetNumberField(TEXT("spacing_y"), SpacingY);
-	
-	// Include positioned node info
-	TArray<TSharedPtr<FJsonValue>> PositionedNodesArray;
-	for (UMaterialExpression* Expr : NodesToLayout)
+
+	TArray<TSharedPtr<FJsonValue>> WarningsArray;
+	for (const FString& Warning : LayoutResult.Warnings)
 	{
+		WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+	}
+
+	TArray<TSharedPtr<FJsonValue>> PositionedNodesArray;
+	for (const FLayeredLayoutVertex& Vertex : Core.GetVertices())
+	{
+		UMaterialExpression* Expr = VertexIdToExpression.FindRef(Vertex.Id);
+		if (!Expr)
+		{
+			continue;
+		}
+
 		TSharedPtr<FJsonObject> NodeInfo = MakeShared<FJsonObject>();
 		NodeInfo->SetStringField(TEXT("node_id"), Expr->MaterialExpressionGuid.ToString());
 		NodeInfo->SetStringField(TEXT("node_type"), Expr->GetClass()->GetName().Replace(TEXT("MaterialExpression"), TEXT("")));
 		NodeInfo->SetNumberField(TEXT("x"), Expr->MaterialExpressionEditorX);
 		NodeInfo->SetNumberField(TEXT("y"), Expr->MaterialExpressionEditorY);
-		NodeInfo->SetNumberField(TEXT("depth"), NodeDepths.FindRef(Expr));
+		NodeInfo->SetNumberField(TEXT("rank"), Vertex.Rank);
 		PositionedNodesArray.Add(MakeShared<FJsonValueObject>(NodeInfo));
 	}
+
+	TSharedPtr<FJsonObject> Result = MakeResult();
+	Result->SetStringField(TEXT("asset_path"), MaterialPath);
+	Result->SetStringField(TEXT("material_path"), MaterialPath);
+	Result->SetStringField(TEXT("graph_name"), Material->GetName());
+	Result->SetStringField(TEXT("layout_engine"), TEXT("layered"));
+	Result->SetNumberField(TEXT("nodes_positioned"), NodesPositioned);
+	Result->SetNumberField(TEXT("edge_count"), EdgeCount);
+	Result->SetNumberField(TEXT("rank_count"), LayoutResult.RankCount);
+	Result->SetNumberField(TEXT("comments_wrapped"), 0);
+	Result->SetNumberField(TEXT("auto_knots_removed"), 0);
+	Result->SetNumberField(TEXT("auto_knots_created"), 0);
+	Result->SetNumberField(TEXT("spacing_x"), SpacingX);
+	Result->SetNumberField(TEXT("spacing_y"), SpacingY);
+	Result->SetArrayField(TEXT("warnings"), WarningsArray);
 	Result->SetArrayField(TEXT("positioned_nodes"), PositionedNodesArray);
-	
+
 	return FECACommandResult::Success(Result);
 }
 

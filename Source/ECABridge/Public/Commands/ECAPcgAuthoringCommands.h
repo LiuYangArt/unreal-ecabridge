@@ -100,6 +100,29 @@ public:
 };
 
 /**
+ * Auto-layout a PCG graph with the shared layered graph layout engine.
+ */
+class FECACommand_AutoLayoutPCGGraph : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("auto_layout_pcg_graph"); }
+	virtual FString GetDescription() const override { return TEXT("Automatically arrange PCG graph nodes with the shared layered graph layout engine."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+
+	virtual TArray<FECACommandParam> GetParameters() const override
+	{
+		return {
+			{ TEXT("graph_path"), TEXT("string"), TEXT("Path to the PCGGraph asset"), true },
+			{ TEXT("spacing_x"), TEXT("number"), TEXT("Horizontal rank spacing between nodes (default: 320)"), false, TEXT("320") },
+			{ TEXT("spacing_y"), TEXT("number"), TEXT("Vertical spacing within ranks (default: 160)"), false, TEXT("160") },
+			{ TEXT("node_ids"), TEXT("array"), TEXT("Specific node IDs to layout (optional, layouts all if not specified)"), false }
+		};
+	}
+
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+/**
  * Set a property by name on a PCG node's settings object using UE reflection.
  */
 class FECACommand_SetPCGNodeProperty : public IECACommand
