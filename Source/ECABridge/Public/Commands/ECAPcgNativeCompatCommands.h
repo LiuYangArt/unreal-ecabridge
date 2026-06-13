@@ -242,6 +242,27 @@ public:
 	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
 };
 
+
+class FECACommand_RunPCGInstantGraph : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("run_pcg_instant_graph"); }
+	virtual FString GetDescription() const override { return TEXT("Run a PCG graph as a transient instant graph with optional parameter overrides. UE 5.8+ schedules through the native PCG execution source."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+	virtual TArray<FECACommandParam> GetParameters() const override { return {{ TEXT("graph_path"), TEXT("string"), TEXT("PCGGraph asset path"), true }, { TEXT("params"), TEXT("object"), TEXT("Optional graph parameter overrides"), false }}; }
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
+class FECACommand_DrawPCGSpline : public IECACommand
+{
+public:
+	virtual FString GetName() const override { return TEXT("draw_pcg_spline"); }
+	virtual FString GetDescription() const override { return TEXT("Create or redraw a spline actor for PCG workflows from explicit points. This is the agent-native equivalent of the official interactive DrawSpline tool."); }
+	virtual FString GetCategory() const override { return TEXT("PCG"); }
+	virtual TArray<FECACommandParam> GetParameters() const override { return {{ TEXT("actor_label"), TEXT("string"), TEXT("Actor label to create or redraw"), true }, { TEXT("actor_tag"), TEXT("string"), TEXT("Optional actor tag"), false }, { TEXT("redraw"), TEXT("boolean"), TEXT("Replace an existing actor's spline points"), false, TEXT("false") }, { TEXT("closed_spline"), TEXT("boolean"), TEXT("Whether the spline is closed"), false, TEXT("false") }, { TEXT("points"), TEXT("array"), TEXT("Spline points as {x,y,z} objects"), true }}; }
+	virtual FECACommandResult Execute(const TSharedPtr<FJsonObject>& Params) override;
+};
+
 class FECACommand_GetPCGNodeDataView : public IECACommand
 {
 public:

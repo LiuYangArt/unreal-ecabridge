@@ -2,6 +2,7 @@
 
 #include "Commands/ECAPcgNativeCompatCommands.h"
 #include "Commands/ECACommand.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 #include "PCGComponent.h"
 #include "PCGData.h"
@@ -12,6 +13,11 @@
 #include "PCGSettings.h"
 #include "PCGSubgraph.h"
 #include "PCGVolume.h"
+#include "Subsystems/PCGSubsystem.h"
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+#include "PCGDefaultWorldObjectExecutionSource.h"
+#include "Subsystems/IPCGBaseSubsystem.h"
+#endif
 #include "Data/PCGPointData.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -20,9 +26,9 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Components/SplineComponent.h"
 #include "GameFramework/Actor.h"
 #include "Misc/PackageName.h"
-#include "Runtime/Launch/Resources/Version.h"
 #include "StructUtils/InstancedStruct.h"
 #include "StructUtils/PropertyBag.h"
 #include "UObject/Package.h"
@@ -55,6 +61,8 @@ REGISTER_ECA_COMMAND(FECACommand_SetPCGGraphInstanceParams)
 REGISTER_ECA_COMMAND(FECACommand_ResetPCGGraphInstanceParams)
 REGISTER_ECA_COMMAND(FECACommand_ExecutePCGGraphInstance)
 REGISTER_ECA_COMMAND(FECACommand_GetPCGNodeDataView)
+REGISTER_ECA_COMMAND(FECACommand_RunPCGInstantGraph)
+REGISTER_ECA_COMMAND(FECACommand_DrawPCGSpline)
 
 namespace ECAPcgNativeCompat
 {
@@ -1380,6 +1388,136 @@ FECACommandResult FECACommand_ExecutePCGGraphInstance::Execute(const TSharedPtr<
 		Data.Add(MakeShared<FJsonValueObject>(Obj));
 	}
 	Out->SetArrayField(TEXT("outputs"), Data);
+	return FECACommandResult::Success(Out);
+}
+
+
+FECACommandResult FECACommand_RunPCGInstantGraph::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true)) return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	UPCGGraph* Graph = LoadGraph(GraphPath);
+	if (!Graph) return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+
+#if ENGINE_MAJOR_VERSION > 5 || (ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 8)
+	UPCGSubsystem* PCGSubsystem = UPCGSubsystem::GetSubsystemForCurrentWorld();
+	if (!PCGSubsystem) return FECACommandResult::Error(TEXT("Failed to get PCGSubsystem for current world"));
+
+	UPCGGraphInstance* GraphInstance = NewObject<UPCGGraphInstance>(PCGSubsystem, MakeUniqueObjectName(PCGSubsystem, UPCGGraphInstance::StaticClass(), Graph->GetFName()), RF_Transient);
+	if (!GraphInstance) return FECACommandResult::Error(TEXT("Failed to create transient PCG graph instance"));
+	GraphInstance->SetGraph(Graph);
+
+	TArray<TSharedPtr<FJsonValue>> Warnings;
+	const TSharedPtr<FJsonObject>* ParamsObj = nullptr;
+	if (GetObjectParam(Params, TEXT("params"), ParamsObj, false) && ParamsObj && ParamsObj->IsValid())
+	{
+		FInstancedPropertyBag& Bag = GraphInstance->ParametersOverrides.Parameters;
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*ParamsObj)->Values)
+		{
+			const FName ParamName(*Pair.Key);
+			if (!FindPropertyDesc(Bag, ParamName))
+			{
+				Warnings.Add(MakeShared<FJsonValueString>(FString::Printf(TEXT("Parameter '%s' not found on graph '%s'"), *Pair.Key, *Graph->GetName())));
+				continue;
+			}
+			FString Error;
+			if (!SetBagValue(Bag, ParamName, Pair.Value, Error))
+			{
+				return FECACommandResult::Error(Error);
+			}
+			if (const FPropertyBagPropertyDesc* Desc = FindPropertyDesc(Bag, ParamName))
+			{
+				if (Desc->CachedProperty)
+				{
+					GraphInstance->UpdatePropertyOverride(Desc->CachedProperty, true);
+				}
+			}
+		}
+	}
+
+	FPCGDefaultWorldObjectExecutionSourceParams ExecutionParams;
+	ExecutionParams.GraphInterface = GraphInstance;
+	ExecutionParams.WorldObject = PCGSubsystem;
+	ExecutionParams.bFireAndForgetExecution = true;
+	UPCGDefaultWorldObjectExecutionSource* ExecutionSource = IPCGBaseSubsystem::CreateExecutionSource<UPCGDefaultWorldObjectExecutionSource>(ExecutionParams, PCGSubsystem);
+	if (!ExecutionSource) return FECACommandResult::Error(TEXT("Failed to create PCG instant graph execution source"));
+
+	TSharedPtr<FJsonObject> Out = MakeResult();
+	Out->SetStringField(TEXT("graph_path"), Graph->GetPathName());
+	Out->SetStringField(TEXT("graph_instance_path"), GraphInstance->GetPathName());
+	Out->SetBoolField(TEXT("scheduled"), true);
+	Out->SetArrayField(TEXT("warnings"), Warnings);
+	Out->SetStringField(TEXT("execution_mode"), TEXT("fire_and_forget"));
+	return FECACommandResult::Success(Out);
+#else
+	return FECACommandResult::Error(TEXT("run_pcg_instant_graph requires UE 5.8 or newer public PCG execution-source APIs"));
+#endif
+}
+
+FECACommandResult FECACommand_DrawPCGSpline::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ActorLabel;
+	if (!GetStringParam(Params, TEXT("actor_label"), ActorLabel, true)) return FECACommandResult::ValidationError(this, TEXT("actor_label is required"));
+	FString ActorTag;
+	GetStringParam(Params, TEXT("actor_tag"), ActorTag, false);
+	bool bRedraw = false;
+	bool bClosedSpline = false;
+	GetBoolParam(Params, TEXT("redraw"), bRedraw, false);
+	GetBoolParam(Params, TEXT("closed_spline"), bClosedSpline, false);
+	const TArray<TSharedPtr<FJsonValue>>* Points = nullptr;
+	if (!GetArrayParam(Params, TEXT("points"), Points, true) || !Points || Points->Num() < 2)
+	{
+		return FECACommandResult::ValidationError(this, TEXT("points must contain at least two {x,y,z} objects"));
+	}
+
+	UWorld* World = GetEditorWorld();
+	if (!World) return FECACommandResult::Error(TEXT("Editor world not available"));
+
+	AActor* Actor = bRedraw ? FindActorByLabel(World, ActorLabel) : nullptr;
+	if (!Actor)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Name = MakeUniqueObjectName(World, AActor::StaticClass(), FName(*ActorLabel));
+		Actor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+		if (!Actor) return FECACommandResult::Error(TEXT("Failed to spawn spline actor"));
+		Actor->SetActorLabel(ActorLabel);
+	}
+
+	USplineComponent* Spline = Actor->FindComponentByClass<USplineComponent>();
+	if (!Spline)
+	{
+		Spline = NewObject<USplineComponent>(Actor, USplineComponent::StaticClass(), NAME_None, RF_Transactional);
+		if (!Spline) return FECACommandResult::Error(TEXT("Failed to create spline component"));
+		Spline->RegisterComponent();
+		Actor->AddInstanceComponent(Spline);
+		Actor->SetRootComponent(Spline);
+	}
+
+	Actor->Modify();
+	Spline->Modify();
+	Spline->ClearSplinePoints(false);
+	for (int32 Index = 0; Index < Points->Num(); ++Index)
+	{
+		FVector Point = FVector::ZeroVector;
+		if (!JsonToVector((*Points)[Index], Point))
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("points[%d] must be an object with x, y, and z fields"), Index));
+		}
+		Spline->AddSplinePoint(Point, ESplineCoordinateSpace::World, false);
+	}
+	Spline->SetClosedLoop(bClosedSpline, false);
+	Spline->UpdateSpline();
+	if (!ActorTag.IsEmpty())
+	{
+		Actor->Tags.AddUnique(FName(*ActorTag));
+	}
+
+	TSharedPtr<FJsonObject> Out = MakeResult();
+	Out->SetStringField(TEXT("actor_label"), Actor->GetActorNameOrLabel());
+	Out->SetStringField(TEXT("actor_path"), Actor->GetPathName());
+	Out->SetStringField(TEXT("component_name"), Spline->GetName());
+	Out->SetNumberField(TEXT("point_count"), Points->Num());
+	Out->SetBoolField(TEXT("closed_spline"), bClosedSpline);
 	return FECACommandResult::Success(Out);
 }
 

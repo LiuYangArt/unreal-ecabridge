@@ -10,6 +10,11 @@
 #include "PCGPin.h"
 #include "PCGEdge.h"
 #include "PCGInputOutputSettings.h"
+#include "PCGModule.h"
+#include "Data/Registry/PCGDataType.h"
+#include "Data/Registry/PCGDataTypeRegistry.h"
+#include "Elements/PCGFilterByType.h"
+#include "Helpers/PCGSubgraphHelpers.h"
 
 #include "Engine/StaticMesh.h"
 #include "StructUtils/PropertyBag.h"
@@ -19,9 +24,12 @@
 #include "UObject/SavePackage.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/UnrealType.h"
+#include "UObject/TextProperty.h"
 #include "Misc/PackageName.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 REGISTER_ECA_COMMAND(FECACommand_CreatePCGGraph)
 REGISTER_ECA_COMMAND(FECACommand_AddPCGNode)
@@ -33,6 +41,8 @@ REGISTER_ECA_COMMAND(FECACommand_SetPCGGraphParameterTooltip)
 REGISTER_ECA_COMMAND(FECACommand_RenamePCGGraphParameter)
 REGISTER_ECA_COMMAND(FECACommand_RemovePCGGraphParameter)
 REGISTER_ECA_COMMAND(FECACommand_SetPCGGraphParameterDefault)
+REGISTER_ECA_COMMAND(FECACommand_SetPCGGraphParams)
+REGISTER_ECA_COMMAND(FECACommand_RemovePCGGraphParams)
 
 namespace ECAPcgHelpers
 {
@@ -64,6 +74,197 @@ namespace ECAPcgHelpers
 			}
 		}
 		return nullptr;
+	}
+
+	static bool JsonToVector(const TSharedPtr<FJsonValue>& Json, FVector& OutValue);
+	static bool JsonToRotator(const TSharedPtr<FJsonValue>& Json, FRotator& OutValue);
+	static bool JsonToTransform(const TSharedPtr<FJsonValue>& Json, FTransform& OutValue);
+
+	static bool SafeRenameNode(UPCGNode* Node, const FString& NewName, FString& OutError)
+	{
+		if (!Node || NewName.IsEmpty())
+		{
+			return true;
+		}
+		if (!Node->Rename(*NewName, nullptr, REN_Test))
+		{
+			OutError = FString::Printf(TEXT("Could not rename PCG node to '%s'; the name may already be used"), *NewName);
+			return false;
+		}
+		Node->Rename(*NewName);
+		return true;
+	}
+
+	static bool SetUObjectPropertyFromJson(UObject* Object, const FString& PropertyName, const TSharedPtr<FJsonValue>& ValueJson, FString& OutError)
+	{
+		if (!Object || !ValueJson.IsValid())
+		{
+			OutError = TEXT("object and value are required");
+			return false;
+		}
+
+		FProperty* Property = Object->GetClass()->FindPropertyByName(FName(*PropertyName));
+		if (!Property)
+		{
+			OutError = FString::Printf(TEXT("Property '%s' not found on '%s'"), *PropertyName, *Object->GetClass()->GetName());
+			return false;
+		}
+
+		void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Object);
+		bool bApplied = false;
+		double Number = 0.0;
+		FString StringValue;
+		bool BoolValue = false;
+
+		if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
+		{
+			if (ValueJson->TryGetBool(BoolValue))
+			{
+				BoolProp->SetPropertyValue(ValuePtr, BoolValue);
+				bApplied = true;
+			}
+		}
+		else if (FNumericProperty* NumberProp = CastField<FNumericProperty>(Property))
+		{
+			if (ValueJson->TryGetNumber(Number))
+			{
+				if (NumberProp->IsInteger()) NumberProp->SetIntPropertyValue(ValuePtr, static_cast<int64>(Number));
+				else NumberProp->SetFloatingPointPropertyValue(ValuePtr, Number);
+				bApplied = true;
+			}
+		}
+		else if (FStrProperty* StrProp = CastField<FStrProperty>(Property))
+		{
+			if (ValueJson->TryGetString(StringValue))
+			{
+				StrProp->SetPropertyValue(ValuePtr, StringValue);
+				bApplied = true;
+			}
+		}
+		else if (FNameProperty* NameProp = CastField<FNameProperty>(Property))
+		{
+			if (ValueJson->TryGetString(StringValue))
+			{
+				NameProp->SetPropertyValue(ValuePtr, FName(*StringValue));
+				bApplied = true;
+			}
+		}
+		else if (FTextProperty* TextProp = CastField<FTextProperty>(Property))
+		{
+			if (ValueJson->TryGetString(StringValue))
+			{
+				TextProp->SetPropertyValue(ValuePtr, FText::FromString(StringValue));
+				bApplied = true;
+			}
+		}
+		else if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+		{
+			if (ValueJson->TryGetString(StringValue))
+			{
+				UEnum* Enum = EnumProp->GetEnum();
+				const int64 EnumValue = Enum ? Enum->GetValueByNameString(StringValue) : INDEX_NONE;
+				if (EnumValue != INDEX_NONE)
+				{
+					EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, EnumValue);
+					bApplied = true;
+				}
+			}
+			else if (ValueJson->TryGetNumber(Number))
+			{
+				EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, static_cast<int64>(Number));
+				bApplied = true;
+			}
+		}
+		else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+		{
+			if (StructProp->Struct == TBaseStructure<FVector>::Get())
+			{
+				FVector VectorValue;
+				if (JsonToVector(ValueJson, VectorValue))
+				{
+					StructProp->CopyCompleteValue(ValuePtr, &VectorValue);
+					bApplied = true;
+				}
+			}
+			else if (StructProp->Struct == TBaseStructure<FRotator>::Get())
+			{
+				FRotator RotatorValue;
+				if (JsonToRotator(ValueJson, RotatorValue))
+				{
+					StructProp->CopyCompleteValue(ValuePtr, &RotatorValue);
+					bApplied = true;
+				}
+			}
+			else if (StructProp->Struct == TBaseStructure<FTransform>::Get())
+			{
+				FTransform TransformValue;
+				if (JsonToTransform(ValueJson, TransformValue))
+				{
+					StructProp->CopyCompleteValue(ValuePtr, &TransformValue);
+					bApplied = true;
+				}
+			}
+		}
+
+		if (!bApplied)
+		{
+			OutError = FString::Printf(TEXT("Property '%s' of type '%s' could not be assigned"), *PropertyName, *Property->GetCPPType());
+			return false;
+		}
+
+		Object->Modify();
+		return true;
+	}
+
+	static bool SetObjectPropertiesFromJson(UObject* Object, const TSharedPtr<FJsonObject>& Properties, FString& OutError)
+	{
+		if (!Properties.IsValid())
+		{
+			return true;
+		}
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
+		{
+			if (!SetUObjectPropertyFromJson(Object, Pair.Key, Pair.Value, OutError))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	static TOptional<TArray<UPCGNode*>> TryAddConversionNodes(UPCGGraph* Graph, UPCGPin* OutPin, UPCGPin* InPin)
+	{
+		if (!Graph || !OutPin || !InPin)
+		{
+			return {};
+		}
+		const FPCGDataTypeRegistry& Registry = FPCGModule::GetConstDataTypeRegistry();
+		const FPCGDataTypeIdentifier UpstreamTypes = OutPin->GetCurrentTypesID();
+		const FPCGDataTypeIdentifier DownstreamTypes = InPin->GetCurrentTypesID();
+
+		for (const FPCGDataTypeBaseId& Id : UpstreamTypes.GetIds())
+		{
+			if (const FPCGDataTypeInfo* Info = Registry.GetTypeInfo(Id))
+			{
+				if (TOptional<TArray<UPCGNode*>> Nodes = Info->AddConversionNodesTo(UpstreamTypes, DownstreamTypes, Graph, OutPin, InPin))
+				{
+					return Nodes;
+				}
+			}
+		}
+
+		for (const FPCGDataTypeBaseId& Id : DownstreamTypes.GetIds())
+		{
+			if (const FPCGDataTypeInfo* Info = Registry.GetTypeInfo(Id))
+			{
+				if (TOptional<TArray<UPCGNode*>> Nodes = Info->AddConversionNodesFrom(UpstreamTypes, DownstreamTypes, Graph, OutPin, InPin))
+				{
+					return Nodes;
+				}
+			}
+		}
+
+		return {};
 	}
 
 	static UPCGNode* FindNodeById(UPCGGraph* Graph, const FString& NodeId)
@@ -741,6 +942,14 @@ FECACommandResult FECACommand_AddPCGNode::Execute(const TSharedPtr<FJsonObject>&
 	{
 		return FECACommandResult::ValidationError(this, TEXT("settings_class is required"));
 	}
+	FString NodeId;
+	FString NodeTitle;
+	FString NodeComment;
+	GetStringParam(Params, TEXT("node_id"), NodeId, false);
+	GetStringParam(Params, TEXT("node_title"), NodeTitle, false);
+	GetStringParam(Params, TEXT("node_comment"), NodeComment, false);
+	const TSharedPtr<FJsonObject>* Properties = nullptr;
+	GetObjectParam(Params, TEXT("properties"), Properties, false);
 	double PosX = 0.0, PosY = 0.0;
 	GetFloatParam(Params, TEXT("position_x"), PosX, false);
 	GetFloatParam(Params, TEXT("position_y"), PosY, false);
@@ -757,11 +966,34 @@ FECACommandResult FECACommand_AddPCGNode::Execute(const TSharedPtr<FJsonObject>&
 		return FECACommandResult::Error(FString::Printf(TEXT("UPCGSettings subclass '%s' not found. Use list_pcg_node_types to discover available classes."), *SettingsClassName));
 	}
 
+	Graph->Modify();
 	UPCGSettings* DefaultSettings = nullptr;
 	UPCGNode* NewNode = Graph->AddNodeOfType(TSubclassOf<UPCGSettings>(SettingsClass), DefaultSettings);
 	if (!NewNode)
 	{
 		return FECACommandResult::Error(FString::Printf(TEXT("UPCGGraph::AddNodeOfType returned null for '%s'"), *SettingsClass->GetName()));
+	}
+
+	FString Error;
+	if (!ECAPcgHelpers::SafeRenameNode(NewNode, NodeId, Error))
+	{
+		Graph->RemoveNode(NewNode);
+		return FECACommandResult::Error(Error);
+	}
+	if (!NodeTitle.IsEmpty())
+	{
+		NewNode->NodeTitle = FName(*NodeTitle);
+	}
+	NewNode->NodeComment = NodeComment;
+	NewNode->bCommentBubbleVisible = !NodeComment.IsEmpty();
+	if (Properties && Properties->IsValid())
+	{
+		UPCGSettings* Settings = NewNode->GetSettings();
+		if (!Settings || !ECAPcgHelpers::SetObjectPropertiesFromJson(Settings, *Properties, Error))
+		{
+			Graph->RemoveNode(NewNode);
+			return FECACommandResult::Error(Error.IsEmpty() ? TEXT("Failed to apply node properties") : Error);
+		}
 	}
 
 #if WITH_EDITOR
@@ -775,6 +1007,8 @@ FECACommandResult FECACommand_AddPCGNode::Execute(const TSharedPtr<FJsonObject>&
 	Result->SetStringField(TEXT("graph_path"), GraphPath);
 	Result->SetStringField(TEXT("node_id"), NewNode->GetName());
 	Result->SetStringField(TEXT("settings_class"), SettingsClass->GetName());
+	Result->SetStringField(TEXT("node_title"), NewNode->NodeTitle.ToString());
+	Result->SetStringField(TEXT("node_comment"), NewNode->NodeComment);
 	return FECACommandResult::Success(Result);
 }
 
@@ -831,15 +1065,78 @@ FECACommandResult FECACommand_ConnectPCGNodes::Execute(const TSharedPtr<FJsonObj
 		ToPinName = Pins[0]->Properties.Label.ToString();
 	}
 
-	UPCGNode* Result = Graph->AddEdge(From, FName(*FromPinName), To, FName(*ToPinName));
-	if (!Result)
+	UPCGPin* OutPin = From->GetOutputPin(FName(*FromPinName));
+	UPCGPin* InPin = To->GetInputPin(FName(*ToPinName));
+	if (!OutPin)
 	{
-		return FECACommandResult::Error(FString::Printf(TEXT("UPCGGraph::AddEdge failed (from '%s'.%s -> '%s'.%s; check pin labels)"),
-			*FromId, *FromPinName, *ToId, *ToPinName));
+		return FECACommandResult::Error(FString::Printf(TEXT("from node '%s' has no output pin named '%s'"), *FromId, *FromPinName));
+	}
+	if (!InPin)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("to node '%s' has no input pin named '%s'"), *ToId, *ToPinName));
+	}
+
+	Graph->Modify();
+	TArray<UPCGNode*> AddedNodes;
+	const EPCGDataTypeCompatibilityResult Compatibility = OutPin->GetCompatibilityWithOtherPin(InPin);
+	switch (Compatibility)
+	{
+	case EPCGDataTypeCompatibilityResult::RequireFilter:
+	{
+		UPCGNode* FilterNode = FPCGSubgraphHelpers::SpawnNodeAndConnect(Graph, OutPin, InPin, UPCGFilterByTypeSettings::StaticClass(),
+			[InPin](UPCGSettings* NodeSettings)
+			{
+				UPCGFilterByTypeSettings* Settings = CastChecked<UPCGFilterByTypeSettings>(NodeSettings);
+				Settings->TargetType = InPin->Properties.AllowedTypes;
+				return true;
+			});
+		if (!FilterNode)
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("Failed to insert PCG filter node for incompatible pins '%s'.%s -> '%s'.%s"), *FromId, *FromPinName, *ToId, *ToPinName));
+		}
+		AddedNodes.Add(FilterNode);
+		break;
+	}
+	case EPCGDataTypeCompatibilityResult::RequireConversion:
+	{
+		TOptional<TArray<UPCGNode*>> ConversionNodes = ECAPcgHelpers::TryAddConversionNodes(Graph, OutPin, InPin);
+		if (!ConversionNodes.IsSet())
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("Failed to insert PCG conversion nodes for incompatible pins '%s'.%s -> '%s'.%s"), *FromId, *FromPinName, *ToId, *ToPinName));
+		}
+		AddedNodes = MoveTemp(ConversionNodes.GetValue());
+		break;
+	}
+	case EPCGDataTypeCompatibilityResult::Compatible:
+	{
+		const bool bAdded = Graph->AddLabeledEdge(From, FName(*FromPinName), To, FName(*ToPinName));
+		if (!bAdded)
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("UPCGGraph::AddLabeledEdge failed (from '%s'.%s -> '%s'.%s; check pin labels)"), *FromId, *FromPinName, *ToId, *ToPinName));
+		}
+		break;
+	}
+	default:
+		return FECACommandResult::Error(FString::Printf(TEXT("PCG pins are incompatible (from '%s'.%s -> '%s'.%s)"), *FromId, *FromPinName, *ToId, *ToPinName));
 	}
 
 	FString SaveError;
 	ECAPcgHelpers::SaveAssetPackage(Graph, SaveError);
+
+	TArray<TSharedPtr<FJsonValue>> AddedNodesJson;
+	for (const UPCGNode* AddedNode : AddedNodes)
+	{
+		if (AddedNode)
+		{
+			TSharedPtr<FJsonObject> AddedNodeObj = MakeShared<FJsonObject>();
+			AddedNodeObj->SetStringField(TEXT("node_id"), AddedNode->GetName());
+			if (const UPCGSettings* Settings = AddedNode->GetSettings())
+			{
+				AddedNodeObj->SetStringField(TEXT("settings_class"), Settings->GetClass()->GetName());
+			}
+			AddedNodesJson.Add(MakeShared<FJsonValueObject>(AddedNodeObj));
+		}
+	}
 
 	TSharedPtr<FJsonObject> Out = MakeResult();
 	Out->SetStringField(TEXT("graph_path"), GraphPath);
@@ -847,6 +1144,7 @@ FECACommandResult FECACommand_ConnectPCGNodes::Execute(const TSharedPtr<FJsonObj
 	Out->SetStringField(TEXT("from_pin"), FromPinName);
 	Out->SetStringField(TEXT("to_node_id"), ToId);
 	Out->SetStringField(TEXT("to_pin"), ToPinName);
+	Out->SetArrayField(TEXT("added_conversion_nodes"), AddedNodesJson);
 	return FECACommandResult::Success(Out);
 }
 
@@ -1508,6 +1806,213 @@ FECACommandResult FECACommand_RemovePCGGraphParameter::Execute(const TSharedPtr<
 	}
 
 	return FECACommandResult::Success(ECAPcgHelpers::BuildGraphParameterResult(Graph, GraphPath, Name));
+}
+
+
+//==============================================================================
+// set_pcg_graph_params
+//==============================================================================
+FECACommandResult FECACommand_SetPCGGraphParams::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+	const TArray<TSharedPtr<FJsonValue>>* ParamDefs = nullptr;
+	if (!GetArrayParam(Params, TEXT("params"), ParamDefs, true) || !ParamDefs)
+	{
+		return FECACommandResult::ValidationError(this, TEXT("params is required"));
+	}
+	bool bDefaultOverwrite = true;
+	GetBoolParam(Params, TEXT("overwrite"), bDefaultOverwrite, false);
+
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	struct FPendingParam
+	{
+		FString Name;
+		FString Type;
+		FString Container;
+		FString ObjectClass;
+		FString Tooltip;
+		bool bOverwrite = true;
+		TSharedPtr<FJsonValue> Value;
+	};
+
+	TArray<FPendingParam> Pending;
+	for (const TSharedPtr<FJsonValue>& ParamValue : *ParamDefs)
+	{
+		const TSharedPtr<FJsonObject>* ParamObj = nullptr;
+		if (!ParamValue.IsValid() || !ParamValue->TryGetObject(ParamObj) || !ParamObj || !ParamObj->IsValid())
+		{
+			return FECACommandResult::Error(TEXT("Each params entry must be an object"));
+		}
+
+		FPendingParam Entry;
+		if (!(*ParamObj)->TryGetStringField(TEXT("name"), Entry.Name) || Entry.Name.IsEmpty())
+		{
+			return FECACommandResult::Error(TEXT("Each params entry requires a non-empty name"));
+		}
+		if (!(*ParamObj)->TryGetStringField(TEXT("type"), Entry.Type) || Entry.Type.IsEmpty())
+		{
+			return FECACommandResult::Error(FString::Printf(TEXT("Parameter '%s' requires type"), *Entry.Name));
+		}
+		Entry.Container = TEXT("none");
+		(*ParamObj)->TryGetStringField(TEXT("container"), Entry.Container);
+		(*ParamObj)->TryGetStringField(TEXT("object_class"), Entry.ObjectClass);
+		(*ParamObj)->TryGetStringField(TEXT("tooltip"), Entry.Tooltip);
+		if (Entry.Tooltip.IsEmpty())
+		{
+			(*ParamObj)->TryGetStringField(TEXT("description"), Entry.Tooltip);
+		}
+		Entry.bOverwrite = bDefaultOverwrite;
+		(*ParamObj)->TryGetBoolField(TEXT("overwrite"), Entry.bOverwrite);
+		Entry.Value = (*ParamObj)->TryGetField(TEXT("value"));
+		if (!Entry.Value.IsValid()) Entry.Value = (*ParamObj)->TryGetField(TEXT("default_value"));
+		FString DefaultValueJson;
+		if (!Entry.Value.IsValid() && (*ParamObj)->TryGetStringField(TEXT("default_value_json"), DefaultValueJson))
+		{
+			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(DefaultValueJson);
+			TSharedPtr<FJsonValue> ParsedValue;
+			if (!FJsonSerializer::Deserialize(Reader, ParsedValue) || !ParsedValue.IsValid())
+			{
+				return FECACommandResult::Error(FString::Printf(TEXT("Parameter '%s' has invalid default_value_json"), *Entry.Name));
+			}
+			Entry.Value = ParsedValue;
+		}
+		Pending.Add(MoveTemp(Entry));
+	}
+
+	Graph->Modify();
+	FString EditError;
+	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
+	{
+		for (const FPendingParam& Entry : Pending)
+		{
+			EPropertyBagPropertyType ValueType = EPropertyBagPropertyType::None;
+			const UObject* ValueTypeObject = nullptr;
+			if (!ECAPcgHelpers::ResolvePropertyBagType(Entry.Type, Entry.ObjectClass, ValueType, ValueTypeObject, EditError))
+			{
+				return;
+			}
+
+			EPropertyBagContainerType ContainerType = EPropertyBagContainerType::None;
+			if (!ECAPcgHelpers::ResolvePropertyBagContainerType(Entry.Container, ContainerType, EditError))
+			{
+				return;
+			}
+
+			const FName ParamName(*Entry.Name);
+			FPropertyBagPropertyDesc Desc = ContainerType == EPropertyBagContainerType::Array
+				? FPropertyBagPropertyDesc(ParamName, ContainerType, ValueType, ValueTypeObject)
+				: FPropertyBagPropertyDesc(ParamName, ValueType, ValueTypeObject);
+#if WITH_EDITOR
+			if (!Entry.Tooltip.IsEmpty())
+			{
+				Desc.SetMetaData(ECAPcgHelpers::TooltipMetaKey, Entry.Tooltip);
+			}
+#endif
+			TArray<FPropertyBagPropertyDesc> Descs;
+			Descs.Add(Desc);
+			const EPropertyBagAlterationResult AddResult = Bag.AddProperties(Descs, Entry.bOverwrite);
+			if (!ECAPcgHelpers::IsSuccess(AddResult))
+			{
+				EditError = FString::Printf(TEXT("Failed to add parameter '%s': %s"), *Entry.Name, *ECAPcgHelpers::PropertyBagAlterationResultToString(AddResult));
+				return;
+			}
+			if (Entry.Value.IsValid() && !ECAPcgHelpers::SetBagValue(Bag, ParamName, Entry.Value, EditError))
+			{
+				return;
+			}
+		}
+	});
+
+	if (!EditError.IsEmpty())
+	{
+		return FECACommandResult::Error(EditError);
+	}
+	FString SaveError;
+	if (!ECAPcgHelpers::SaveAssetPackage(Graph, SaveError))
+	{
+		return FECACommandResult::Error(SaveError);
+	}
+	TSharedPtr<FJsonObject> Out = MakeResult();
+	Out->SetStringField(TEXT("graph_path"), Graph->GetPathName());
+	Out->SetArrayField(TEXT("parameters"), ECAPcgHelpers::BuildParametersJson(Graph->GetUserParametersStruct()));
+	Out->SetNumberField(TEXT("updated_count"), Pending.Num());
+	return FECACommandResult::Success(Out);
+}
+
+//==============================================================================
+// remove_pcg_graph_params
+//==============================================================================
+FECACommandResult FECACommand_RemovePCGGraphParams::Execute(const TSharedPtr<FJsonObject>& Params)
+{
+	FString GraphPath;
+	if (!GetStringParam(Params, TEXT("graph_path"), GraphPath, true))
+	{
+		return FECACommandResult::ValidationError(this, TEXT("graph_path is required"));
+	}
+	const TArray<TSharedPtr<FJsonValue>>* Names = nullptr;
+	if (!GetArrayParam(Params, TEXT("param_names"), Names, true) || !Names)
+	{
+		return FECACommandResult::ValidationError(this, TEXT("param_names is required"));
+	}
+	UPCGGraph* Graph = LoadObject<UPCGGraph>(nullptr, *GraphPath);
+	if (!Graph)
+	{
+		return FECACommandResult::Error(FString::Printf(TEXT("PCGGraph not found at '%s'"), *GraphPath));
+	}
+
+	TArray<FString> ParamNames;
+	for (const TSharedPtr<FJsonValue>& NameValue : *Names)
+	{
+		FString Name;
+		if (!NameValue.IsValid() || !NameValue->TryGetString(Name) || Name.IsEmpty())
+		{
+			return FECACommandResult::Error(TEXT("param_names must contain non-empty strings"));
+		}
+		ParamNames.Add(Name);
+	}
+
+	Graph->Modify();
+	FString EditError;
+	Graph->UpdateUserParametersStruct([&](FInstancedPropertyBag& Bag)
+	{
+		for (const FString& Name : ParamNames)
+		{
+			const EPropertyBagAlterationResult Result = Bag.RemovePropertyByName(FName(*Name));
+			if (!ECAPcgHelpers::IsSuccess(Result))
+			{
+				EditError = FString::Printf(TEXT("Failed to remove parameter '%s': %s"), *Name, *ECAPcgHelpers::PropertyBagAlterationResultToString(Result));
+				return;
+			}
+		}
+	});
+	if (!EditError.IsEmpty())
+	{
+		return FECACommandResult::Error(EditError);
+	}
+	FString SaveError;
+	if (!ECAPcgHelpers::SaveAssetPackage(Graph, SaveError))
+	{
+		return FECACommandResult::Error(SaveError);
+	}
+	TArray<TSharedPtr<FJsonValue>> Removed;
+	for (const FString& Name : ParamNames)
+	{
+		Removed.Add(MakeShared<FJsonValueString>(Name));
+	}
+	TSharedPtr<FJsonObject> Out = MakeResult();
+	Out->SetStringField(TEXT("graph_path"), Graph->GetPathName());
+	Out->SetArrayField(TEXT("removed"), Removed);
+	Out->SetArrayField(TEXT("parameters"), ECAPcgHelpers::BuildParametersJson(Graph->GetUserParametersStruct()));
+	return FECACommandResult::Success(Out);
 }
 
 //==============================================================================
